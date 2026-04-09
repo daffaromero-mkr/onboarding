@@ -129,7 +129,15 @@ async function detectTechStack(repoPath: string): Promise<TechStack> {
     const combined = (pomXml ?? "") + (gradleFile ?? "");
     if (combined.includes("spring-boot")) stack.framework = "Spring Boot";
     else if (combined.includes("spring")) stack.framework = "Spring";
+    else if (combined.includes("quarkus")) stack.framework = "Quarkus";
+    else if (combined.includes("micronaut")) stack.framework = "Micronaut";
+    else if (combined.includes("jersey") || combined.includes("jax-rs") || combined.includes("javax.ws.rs")) stack.framework = "JAX-RS/Jersey";
+    if (combined.includes("quartz")) stack.extraTech.push("Quartz Scheduler");
+    if (combined.includes("mongodb") || combined.includes("morphia")) stack.extraTech.push("MongoDB");
+    if (combined.includes("redis") || combined.includes("jedis") || combined.includes("lettuce")) stack.extraTech.push("Redis");
+    if (combined.includes("kafka")) stack.extraTech.push("Kafka");
     if (combined.includes("junit")) stack.testFramework = "JUnit";
+    if (combined.includes("mockito")) stack.extraTech.push("Mockito");
     stack.packageManager = pomXml ? "maven" : "gradle";
   }
 

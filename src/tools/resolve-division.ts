@@ -20,6 +20,7 @@ interface DivisionEntry {
   division: string;
   product_name: string;
   repo_patterns: string[];
+  org_patterns?: string[];        // matches the org/workspace part of the remote URL
   confluence_space: string;
   onboarding_root_page_id: string | null;
 }
@@ -98,12 +99,15 @@ export function resolveDivision(repoPath: string, overrideDivision?: string): Di
     };
   }
 
-  // Try remote URL first (high confidence), then repo name (medium)
-  for (const confidence of ["high", "medium"] as const) {
-    const searchIn = confidence === "high" ? remoteUrl : repoName;
-    if (!searchIn) continue;
-    for (const entry of map.mappings) {
-      if (entry.repo_patterns.some((p) => new RegExp(p, "i").test(searchIn))) {
+  // Match priority:
+  // 1. repo_patterns against remote URL        (high confidence)
+  // 2. org_patterns against remote URL         (high confidence — org-level match)
+  // 3. repo_patterns against repo name/dirname (medium confidence)
+  for (const entry of map.mappings) {
+    if (remoteUrl) {
+      const repoMatch = entry.repo_patterns.some((p) => new RegExp(p, "i").test(remoteUrl));
+      const orgMatch = entry.org_patterns?.some((p) => new RegExp(p, "i").test(remoteUrl));
+      if (repoMatch || orgMatch) {
         return {
           division: entry.division,
           productName: entry.product_name,
@@ -111,13 +115,28 @@ export function resolveDivision(repoPath: string, overrideDivision?: string): Di
           remoteUrl,
           confluenceSpace: entry.confluence_space,
           onboardingRootPageId: entry.onboarding_root_page_id,
-          confidence,
-          note:
-            confidence === "high"
-              ? `Matched via git remote URL: ${remoteUrl}`
-              : `Matched via repo directory name. Remote: ${remoteUrl ?? "not found"}`,
+          confidence: "high",
+          note: repoMatch
+            ? `Matched via repo name pattern in remote URL: ${remoteUrl}`
+            : `Matched via org/workspace pattern in remote URL: ${remoteUrl}`,
         };
       }
+    }
+  }
+
+  // Fallback: match repo_patterns against directory name
+  for (const entry of map.mappings) {
+    if (entry.repo_patterns.some((p) => new RegExp(p, "i").test(repoName))) {
+      return {
+        division: entry.division,
+        productName: entry.product_name,
+        repoName,
+        remoteUrl,
+        confluenceSpace: entry.confluence_space,
+        onboardingRootPageId: entry.onboarding_root_page_id,
+        confidence: "medium",
+        note: `Matched via repo directory name. Remote: ${remoteUrl ?? "not found"}`,
+      };
     }
   }
 
