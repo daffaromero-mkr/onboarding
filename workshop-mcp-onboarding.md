@@ -105,39 +105,43 @@ These docs become the source of truth for the onboarding session — the MCP inj
 ### High-Level Flow
 
 ```
-Engineer opens repo → types /onboarding
+Engineer opens ANY repo → types /onboarding
          │
          ▼
-┌─────────────────────────────────┐
-│        MCP Harness              │
-│   (repo-aware entry point)      │
-│                                 │
-│  1. Read git remote             │
-│  2. Check /docs or .claude/     │
-│     skills/ for existing docs   │
-└────────────┬────────────────────┘
+┌──────────────────────────────────────┐
+│          MCP Harness                 │
+│   (repo-agnostic entry point)        │
+│                                      │
+│  1. Read current working directory   │
+│  2. Read git remote (if available)   │
+│  3. Scan for ANY valid docs:         │
+│     • /docs/*.md          (best)     │
+│     • .claude/skills/onboarding/     │
+│     • CLAUDE.md           (ok)       │
+│     • README.md           (minimal)  │
+└────────────┬─────────────────────────┘
              │
      ┌───────┴────────┐
      │                │
-  Docs exist?     No docs found
-     │                │
-     ▼                ▼
-  Load docs    ┌──────────────────┐
-               │ Doc Generation   │
-               │ Agent            │
-               │                  │
-               │ • system-design  │
-               │ • codebase       │
-               │ • domain         │
-               │ • workflow       │
-               └──────┬───────────┘
-                      │ writes /docs/
-                      ▼
-                  Load docs
-                      │
-             ─────────┘
-             │
-             ▼
+  Docs found?     No docs found
+  (any level)         │
+     │                ▼
+     ▼          ┌──────────────────┐
+  Load docs     │ Doc Generation   │
+                │ Agent            │
+                │                  │
+                │ • system-design  │
+                │ • codebase       │
+                │ • domain         │
+                │ • workflow       │
+                └──────┬───────────┘
+                       │ writes /docs/
+                       ▼
+                   Load docs
+                       │
+              ─────────┘
+              │
+              ▼
 ┌────────────────────────────────────────┐
 │          MCP Context Layer             │
 │                                        │
@@ -200,14 +204,19 @@ Or the MCP auto-triggers when these phrases are detected:
 
 ### Step 2 — Docs Resolution (PreToolUse Hook)
 
-Before the session starts, the MCP harness runs docs resolution:
+Before the session starts, the MCP harness runs docs resolution against **whatever repo is currently open** — no division mapping required. The harness is repo-agnostic: it reads signals from the repo itself to understand context.
 
-1. Reads `git remote get-url origin` to identify the repo
-2. Checks `/docs/` folder for: `system-design.md`, `codebase.md`, `domain.md`, `workflow.md`
-3. Checks `.claude/skills/` for any existing onboarding skill
-4. **If docs exist** → loads them into session context
-5. **If no docs** → triggers Doc Generation Agent (see Step 2b)
-6. Fetches supplementary context from MCP Confluence and MCP GitHub
+Resolution order:
+
+1. Reads the current working directory and `git remote get-url origin` to identify the repo
+2. Scans for **any valid docs** in this priority order:
+   - `/docs/` folder — looks for any `.md` files covering codebase, workflow, domain, or architecture
+   - `.claude/skills/onboarding/` — existing onboarding skill
+   - `CLAUDE.md` — repo-level Claude instructions (often contains onboarding notes)
+   - `README.md` — minimum viable context
+3. **If usable docs found at any level** → loads them, notes which level was used, injects into session
+4. **If nothing usable found** → triggers Doc Generation Agent (see Step 2b)
+5. Optionally enriches with MCP Confluence and MCP GitHub if available — but the session can run without them
 
 ### Step 2b — Doc Generation Agent (When No Docs Found)
 
@@ -248,7 +257,7 @@ Four agents run concurrently (`run_in_background: true`), reading from generated
 | **Domain Agent** | `/docs/domain.md` + Confluence glossary | What the business words mean |
 | **Culture Agent** | Confluence team pages | How this team operates day-to-day |
 
-### Step 5 — Progressive Challenges
+### Step 5 — Progressive Challenges + Per-Topic Report Hook
 
 After each dimension, the skill issues a mini challenge scoped to the actual repo:
 
@@ -258,14 +267,98 @@ Hint: look in app/services/ (per codebase.md)
 XP reward: 50 XP on first correct answer
 ```
 
-### Step 6 — Session Summary (PostToolUse Hook)
+After the engineer completes the quiz for each topic, a **PostToolUse hook fires immediately** and appends a topic report to a local session file. This happens per-topic, not at the end — so the report builds up incrementally as the session progresses.
 
-When the session ends:
+**What gets written per topic:**
+- Topic name and completion timestamp
+- Score (XP earned vs. max possible)
+- Questions answered correctly vs. incorrectly
+- Key concepts the engineer demonstrated understanding of
+- Any concepts they struggled with (based on wrong answers or follow-up questions)
+- Open questions the engineer asked during that topic
 
-1. Compiles topics covered, XP earned, open questions
-2. Writes summary to Confluence under the engineer's onboarding page
-3. Tags the manager for visibility
-4. Generates "next steps" checklist based on what was covered vs. what remains
+The report is written to `.onboarding/session-{date}.json` in the repo (gitignored). Each topic appends a new entry — the file grows as the session progresses.
+
+```json
+// .onboarding/session-2026-04-09.json (built up incrementally)
+{
+  "engineer": "budi.santoso",
+  "repo": "quickbook",
+  "session_date": "2026-04-09",
+  "topics": [
+    {
+      "topic": "codebase",
+      "completed_at": "10:24",
+      "xp": { "earned": 45, "max": 50 },
+      "understood": ["service objects", "folder structure", "naming conventions"],
+      "struggled_with": ["STI models", "karafka consumers"],
+      "open_questions": ["When should I use a concern vs a service object?"]
+    },
+    {
+      "topic": "workflow",
+      "completed_at": "10:51",
+      "xp": { "earned": 50, "max": 50 },
+      "understood": ["PR lifecycle", "branch naming", "CI pipeline"],
+      "struggled_with": [],
+      "open_questions": []
+    }
+    // ... appended as each topic completes
+  ]
+}
+```
+
+### Step 6 — Graduation + Personal Letter Hook
+
+When the engineer completes all topics and the session reaches the graduation milestone:
+
+1. **Confluence summary** is written (structured, for managers): topics covered, XP earned, open questions, next steps checklist
+2. **Personal graduation letter** is written to `.onboarding/your-onboarding-letter.md` — a warm, personal note addressed to the engineer by name
+
+The personal letter is **not a report** — it's written in a supportive, human tone like a message from a senior engineer who just watched you finish onboarding. It references specific things from the session: what they understood quickly, where they asked good questions, what to focus on next.
+
+```markdown
+<!-- .onboarding/your-onboarding-letter.md — example output -->
+
+# Hey Budi — you made it 🎉
+
+Seriously, congrats. Getting through onboarding isn't just about checking boxes —
+it takes patience and curiosity, and you brought both today.
+
+## What stood out
+
+You picked up the PR workflow really fast. Like, faster than most people do.
+The way you asked about CI failures before I even brought it up tells me you're
+thinking about this the right way — you're thinking about *why*, not just *what*.
+
+Your question about "concern vs service object" was exactly the right question
+to ask. Most people don't notice that distinction until they've written
+the wrong thing three times.
+
+## The one thing to keep in mind
+
+STI models and karafka consumers — those two things tripped you up a bit,
+and honestly that's fair, they trip everyone up. Before you touch anything
+in those areas, just ping a senior first. Not because you can't figure it out,
+but because there's context there that's not in any doc.
+
+## What's next
+
+Your first PR is the real onboarding. Pick something small — a bug fix,
+an improvement to a test, a missing edge case. The point isn't the code,
+it's learning the review cycle with real stakes.
+
+You've got this. The team is lucky to have you.
+
+— Your onboarding mentor
+  (and every senior engineer who wrote these docs)
+```
+
+**Tone rules for the graduation letter:**
+- Address the engineer by first name, always
+- Reference at least 2 specific things from their session (strong topics, open questions)
+- Name the one area to watch out for — honest but not discouraging
+- End with a concrete "what's next" nudge
+- Never generic. Never corporate. Never a policy summary dressed up as a letter.
 
 ---
 
@@ -325,68 +418,102 @@ When the session ends:
 ```
 Name:           onboarding
 Trigger:        /onboarding (manual) or keyword detection (auto)
-MCP deps:       mcp-confluence, mcp-github
-Hook — Pre:     PreToolUse → docs resolution, prefetch context
-Hook — Post:    PostToolUse on Agent → write session summary to Confluence
+MCP deps:       mcp-confluence, mcp-github (optional — degrades gracefully without them)
+Hook — Pre:     PreToolUse → repo-agnostic docs resolution, context injection
+Hook — Mid:     PostToolUse per topic quiz → append topic report to .onboarding/session-{date}.json
+Hook — Post:    On graduation → write Confluence summary + .onboarding/your-onboarding-letter.md
 Sub-agents:     4 parallel (Codebase, Workflow, Domain, Culture)
-Doc gen:        Triggered if /docs/ and .claude/skills/onboarding/ both absent
+Doc gen:        Triggered when no valid docs found at any resolution level
 ```
 
 ### Docs Resolution Schema
 
 ```
-Priority 1: /docs/system-design.md + /docs/codebase.md + /docs/domain.md + /docs/workflow.md
-Priority 2: .claude/skills/onboarding/SKILL.md (legacy fallback)
-Priority 3: README.md + CLAUDE.md (minimal fallback)
-Fallback:   Trigger Doc Generation Agent
+Priority 1: /docs/*.md          — any .md files covering codebase/workflow/domain/architecture
+Priority 2: .claude/skills/onboarding/SKILL.md  — legacy skill fallback
+Priority 3: CLAUDE.md           — repo-level instructions (often has onboarding notes)
+Priority 4: README.md           — minimal context
+Fallback:   Trigger Doc Generation Agent → creates /docs/ → reload Priority 1
 ```
 
-### Division Context Schema
+No static division map required. The harness resolves context from whatever docs exist in the repo.
+
+### Repo Context Schema (dynamic, resolved at runtime)
 
 ```json
 {
-  "division": "jurnal",
-  "product_name": "Mekari Jurnal",
-  "repo_patterns": ["quickbook", "jurnal-"],
-  "confluence_space": "JURNAL",
-  "docs_path": "/docs/",
-  "docs_status": "generated | existing | missing",
-  "onboarding_page_id": "...",
-  "glossary_page_id": "..."
+  "repo_name": "quickbook",
+  "repo_remote": "git@github.com:mekari/quickbook.git",
+  "docs_level": "full | partial | legacy | minimal | generated",
+  "docs_found": ["/docs/codebase.md", "/docs/workflow.md", "CLAUDE.md"],
+  "docs_missing": ["/docs/domain.md", "/docs/system-design.md"],
+  "confluence_space": null,
+  "confluence_available": false
 }
 ```
+
+Division and product context are inferred from docs content — not from a hardcoded mapping table.
 
 ### Hook Pseudocode
 
 ```ruby
 # PreToolUse — fires before /onboarding skill loads
 def pre_onboarding_hook
-  repo_remote = `git remote get-url origin`.strip
-  division = DivisionResolver.from_remote(repo_remote)
+  repo_remote = `git remote get-url origin`.strip rescue nil
+  repo_name   = File.basename(Dir.pwd)
 
-  # Docs-first resolution
-  docs = DocsResolver.load(
-    paths: ["/docs/", ".claude/skills/onboarding/"],
-    fallback: ["README.md", "CLAUDE.md"]
+  # Repo-agnostic docs resolution — scan whatever exists
+  docs = DocsResolver.scan_any(
+    search_paths: ["/docs/", ".claude/skills/onboarding/", "./"],
+    accepted_files: ["*.md"],
+    min_useful_size_kb: 1
   )
 
-  if docs.missing?
-    DocGenerationAgent.run(repo_remote, async: false) # blocks until docs ready
-    docs = DocsResolver.load(paths: ["/docs/"])
+  if docs.empty?
+    show_message("⚙️  No onboarding docs found. Generating docs for this repo...")
+    DocGenerationAgent.run(repo_name, repo_remote, async: false)
+    docs = DocsResolver.scan_any(search_paths: ["/docs/"])
   end
 
-  context = docs.merge(MCPConfluence.fetch_onboarding_context(division))
-  context.merge!(MCPGitHub.fetch_repo_context(repo_remote))
-  Session.inject_context(context)
+  # Enrich with MCP if available — but don't block if not
+  confluence_ctx = MCPConfluence.fetch_if_available(repo_name)
+  github_ctx     = MCPGitHub.fetch_if_available(repo_remote)
+
+  Session.inject_context({ docs:, confluence_ctx:, github_ctx:, repo_name: })
 end
 
-# PostToolUse — fires after Agent sub-agents complete
-def post_onboarding_hook(session_output)
+# PostToolUse (mid-session) — fires after each topic quiz completes
+def post_topic_quiz_hook(topic:, quiz_result:)
+  report_path = ".onboarding/session-#{Date.today}.json"
+  session     = JSON.parse(File.read(report_path)) rescue { engineer: Session.engineer_name, repo: repo_name, topics: [] }
+
+  session[:topics] << {
+    topic:           topic,
+    completed_at:    Time.now.strftime("%H:%M"),
+    xp:              { earned: quiz_result.xp_earned, max: quiz_result.xp_max },
+    understood:      quiz_result.correct_concepts,
+    struggled_with:  quiz_result.missed_concepts,
+    open_questions:  quiz_result.questions_asked
+  }
+
+  File.write(report_path, JSON.pretty_generate(session))
+end
+
+# PostToolUse — fires on graduation
+def post_graduation_hook(session_output)
+  # 1. Structured summary → Confluence (for managers)
   summary = SessionSummarizer.build(session_output)
-  MCPConfluence.write_summary(
-    page_id: engineer_onboarding_page_id,
-    content: summary
+  MCPConfluence.write_summary_if_available(summary)
+
+  # 2. Personal letter → local file (for the engineer)
+  letter = GraduationLetterWriter.write(
+    engineer_name:   Session.engineer_name,
+    session_data:    session_output,
+    topic_reports:   load_topic_reports(".onboarding/session-#{Date.today}.json"),
+    tone:            :warm_senior_engineer
   )
+  File.write(".onboarding/your-onboarding-letter.md", letter)
+  show_message("✉️  A personal note has been saved to .onboarding/your-onboarding-letter.md")
 end
 ```
 
