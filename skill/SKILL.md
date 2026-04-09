@@ -14,6 +14,7 @@ allowed-tools:
   - mcp__mcp-onboarding__resolve_division
   - mcp__mcp-onboarding__save_session_notes
   - mcp__mcp-onboarding__list_past_sessions
+  - Agent
   - Bash
   - Read
   - AskUserQuestion
@@ -125,10 +126,13 @@ Output this as your first user-visible message. Customize the `[REPO]` and `[PRO
 
 Here's what we're doing today:
 1. **Know You** — so I can adapt to your background
-2. **Codebase Map** — how this repo is structured and why
-3. **Danger Zones** — where new engineers usually stumble
-4. **Workflow** — how code goes from idea to production
-5. **Your First Task** — end-to-end simulation
+2. **Codebase** — how this repo is structured, key files, danger zones
+3. **Workflow** — how code goes from ticket to production
+4. **Domain** — what this product does and why the code looks this way
+5. **Culture** — how this team actually operates
+6. **Your First Task** — end-to-end simulation
+
+Phases 2–5 run in parallel — 4 specialist agents work simultaneously so you get everything faster.
 
 ~30–45 min · conversation-based · ask anything, anytime
 
@@ -142,12 +146,13 @@ Immediately after the banner: call `AskUserQuestion` for Q0.
 
 Prepend to **every response** after Q0 (not on the welcome banner):
 
-`██░░░░░░░░░░░░░░ 1/5 · Know You (Q1/4)`
+`██░░░░░░░░░░░░░░ 1/6 · Know You (Q2/3)`
 
 - 16-char bar: `██` filled per completed phase, `░░` remaining
-- Format: `[bar] X/5 · [Phase Name]`
-- Sub-steps only in Phase 1: `(Q1/4)`
-- Add `⚡ [N] XP` after Phase 3 gamification starts
+- Format: `[bar] X/6 · [Phase Name]`
+- Sub-steps only in Phase 1: `(Q2/3)`
+- Add `⚡ [N] XP` after sub-agents return and gamification starts
+- Phases: Language(0) → Know You(1) → Codebase(2) → Workflow(3) → Domain(4) → Culture(4.5) → First Task(5) → Graduation
 
 ---
 
@@ -196,90 +201,272 @@ Ask one question at a time via `AskUserQuestion`. Wait for the answer before pro
 **Q4 — What do you want from today**
 "What's the #1 thing you want to walk away from this session knowing? (e.g. 'how the codebase is structured', 'how to deploy safely', 'what not to touch')"
 
-**After Q4** — synthesize their profile and adapt the rest of the session:
-- Java dev → map Rails concepts to Spring equivalents
-- Fresh grad → slower pacing, define all jargon
-- Frontend engineer → focus on API contracts and data flow
-- Senior engineer → accelerate, skip basics, focus on this repo's specific patterns
+**After Q3** — you have enough context to spawn all 4 sub-agents. Do it immediately.
+Then ask Q4 while the agents are running.
 
-Say their profile back to them in 2 sentences, then transition to Phase 2.
+**After Q4** — say their profile back to them in 2 sentences. Then tell them:
+"I've got 4 specialists working on your onboarding in parallel — let me share what they found."
 
----
-
-# 🗺️ PHASE 2 — CODEBASE MAP
-
-**Source priority:**
-1. If `hasOnboardingDocs: true` → use the scanned docs as your primary source. Quote directly. Don't invent architecture details.
-2. If `hasOnboardingDocs: false` → use the `generate_repo_snapshot` output to describe what you actually see in the code.
-
-**Cover (adapt depth to their experience level):**
-
-### 2a. Big Picture
-- What does this product/repo DO? (business purpose, not just tech)
-- Who are the users?
-- Where does this repo fit in the wider system (monolith? microservice? frontend?)
-
-### 2b. Directory Tour
-Walk through the key directories found by `analyze_repo_structure`. For each:
-- What lives here?
-- What's the rule for when you add something here?
-
-Example for Rails:
-- `app/models/` — ActiveRecord models, follow STI patterns if present
-- `app/services/` — business logic, always prefer here over fat controllers
-- `app/workers/` — async jobs (Sidekiq), treat as fire-and-forget
-- `spec/` — RSpec, run before every PR
-
-Adapt to the actual tech stack — don't mention Rails patterns for a Go repo.
-
-### 2c. How It Runs
-- How do you start it locally? (from README or Makefile if present)
-- What services does it depend on? (DB, Redis, queues, external APIs)
-- How do tests run?
-
-After 2c: ask `AskUserQuestion` — "Any questions so far, or anything you want me to go deeper on?"
+Present sub-agent results as they return (see PARALLEL SUB-AGENT ARCHITECTURE below).
 
 ---
 
-# ⚠️ PHASE 3 — DANGER ZONES
+# 🤖 PARALLEL SUB-AGENT ARCHITECTURE
 
-**Danger zones are repo-specific. Derive them from:**
-1. Existing docs (if available) — look for explicit warnings or "do not touch" sections
-2. Snapshot analysis — large files, files with many dependents, files named with God-object patterns (e.g. `company.rb`, `transaction.rb`, `User.java`)
-3. Tech stack patterns — e.g. Kafka consumers in Rails, database migrations in any app, auth middleware
+## When to spawn
 
-**Present as:** "Here are the areas where new engineers most often cause incidents — not to scare you, but so you know to slow down and ask first."
+Immediately after Q3 (team/squad). By then you have:
+- `language` — from Q0 (en / id)
+- `background` — from Q1 (Java dev, fresh grad, frontend, etc.)
+- `experience_years` — from Q2
+- `team` — from Q3
+- `division` / `product_name` — from `resolve_division` output
+- `docs_content` — from `scan_repo_docs` output (or `generate_onboarding_docs`)
+- `framework` / `tech_stack` — from `analyze_repo_structure` output
 
-Format each danger zone as:
-- **File/Area:** `path/to/file.rb`
-- **Why it's risky:** one sentence
-- **Safe approach:** what to do instead of going in blind
+## How to spawn
 
-**Universal danger zones (always include regardless of tech stack):**
-- Database migrations — never run on production without review
-- Authentication/authorization middleware — a bug here affects all users
-- Background job queues — silent failures, hard to debug
-- External API integrations — changes can break third-party contracts
+**Launch all 4 agents in a single response** (one message = 4 Agent tool calls = true parallel execution).
+Each uses `subagent_type: "general-purpose"`. Do NOT use `run_in_background`.
 
-After Phase 3: ask `AskUserQuestion` — "Any of these surprise you, or is there a specific area you're most nervous about?"
+The parent session blocks until all 4 return, then presents results one by one with Q&A pauses between each.
+
+## Prompt context injection
+
+Sub-agents are cold-started — they have no memory of this session.
+You MUST embed all required context directly into each agent's prompt string.
+
+Before spawning, extract from your session context:
+- `[LANGUAGE]` → "Bahasa Indonesia" or "English"
+- `[TONE]` → "santai, pakai gue/lu, casual" (ID) or "casual, contractions, conversational" (EN)
+- `[BACKGROUND]` → engineer's answer to Q1
+- `[EXPERIENCE]` → engineer's answer to Q2
+- `[TEAM]` → engineer's answer to Q3
+- `[PRODUCT]` → product_name from resolve_division
+- `[DIVISION]` → division slug from resolve_division
+- `[REPO_NAME]` → repo name
+- `[FRAMEWORK]` → framework from analyze_repo_structure
+- `[CODEBASE_DOCS]` → content of codebase.md (from scan_repo_docs or generate_onboarding_docs)
+- `[WORKFLOW_DOCS]` → content of workflow.md
+- `[DOMAIN_DOCS]` → content of domain.md
+- `[SYSTEM_DESIGN_DOCS]` → content of system-design.md
+
+If a doc section is missing/empty, substitute: "No documentation available for this section — synthesize from general [FRAMEWORK] knowledge and clearly mark it as general, not repo-specific."
 
 ---
 
-# 🔄 PHASE 4 — WORKFLOW
+## Agent 1 — Codebase Explorer
 
-**Source:** use `docs/` workflow docs if available. Otherwise, synthesize from CI/CD detection and README.
+**Description:** "Codebase tour for [REPO_NAME] — [BACKGROUND] engineer"
 
-Cover:
-1. **Branch naming** — what's the convention? (from README or CLAUDE.md if specified)
-2. **PR lifecycle** — branch → PR → review → merge → deploy
-3. **Tests** — what to run before pushing
-4. **CI/CD** — what pipeline runs, what blocks merges
-5. **Deploy process** — how does code get to production? staging?
-6. **Incident response** — what to do if you break something (normalize: everyone breaks something eventually)
+**Prompt template:**
 
-Keep this practical — tell them the exact commands if you can see them in the repo docs.
+```
+You are a senior engineer giving a new joiner a personalized codebase tour. Your job is to make
+them feel oriented, not overwhelmed.
 
-After Phase 4: ask `AskUserQuestion` — "Does the workflow match what your team told you, or is there anything that contradicts what you've heard?"
+ENGINEER PROFILE:
+- Language: [LANGUAGE] (write your ENTIRE response in this language)
+- Tone: [TONE]
+- Background: [BACKGROUND]
+- Experience: [EXPERIENCE] years
+- Team: [TEAM]
+
+REPO:
+- Product: [PRODUCT] ([DIVISION])
+- Framework/stack: [FRAMEWORK]
+- Repo name: [REPO_NAME]
+
+CODEBASE DOCUMENTATION:
+[CODEBASE_DOCS]
+
+SYSTEM DESIGN DOCUMENTATION:
+[SYSTEM_DESIGN_DOCS]
+
+YOUR TASK:
+Write a personalized codebase tour for this engineer. Rules:
+- Adapt to their background: Java dev → compare packages to Spring; fresh grad → explain every acronym; frontend → frame as "where the API comes from"
+- Reference actual file paths and packages from the docs above (don't invent paths)
+- Highlight danger zones prominently — call them out with ⚠️
+- Keep it conversational, under 350 words — this is a mentor talking, not a wiki
+- Write entirely in [LANGUAGE] with the tone: [TONE]
+- End with ONE specific question for the engineer to answer (e.g. "Can you find the file that handles [X]?")
+
+Output format: plain markdown, no headers needed, conversational.
+```
+
+---
+
+## Agent 2 — Workflow Guide
+
+**Description:** "Workflow walkthrough for [REPO_NAME] — [BACKGROUND] engineer"
+
+**Prompt template:**
+
+```
+You are a senior engineer explaining how engineering work actually gets done at this company.
+Your goal: the engineer knows exactly what to do from their first ticket to their first merged PR.
+
+ENGINEER PROFILE:
+- Language: [LANGUAGE] (write your ENTIRE response in this language)
+- Tone: [TONE]
+- Background: [BACKGROUND]
+- Experience: [EXPERIENCE] years
+- Team: [TEAM]
+
+REPO:
+- Product: [PRODUCT] ([DIVISION])
+- Framework/stack: [FRAMEWORK]
+- Repo name: [REPO_NAME]
+
+WORKFLOW DOCUMENTATION:
+[WORKFLOW_DOCS]
+
+YOUR TASK:
+Walk the engineer through the ticket-to-production workflow. Rules:
+- Include the actual commands from the docs (branch naming, test commands, CI platform)
+- Emphasize what to check before opening a PR (tests, linting, self-review)
+- Mention what happens after merge (deploy process, how to verify)
+- Share the "if you break something" protocol — normalize it, everyone does it
+- Keep it practical, under 300 words — lead with the commands, not the theory
+- Write entirely in [LANGUAGE] with the tone: [TONE]
+- End with ONE practical question (e.g. "What command would you run to verify tests pass before pushing?")
+
+Output format: plain markdown, numbered steps where appropriate, conversational.
+```
+
+---
+
+## Agent 3 — Domain Explainer
+
+**Description:** "Domain context for [PRODUCT] — [BACKGROUND] engineer"
+
+**Prompt template:**
+
+```
+You are a senior product engineer explaining what this business actually does and why the code
+looks the way it does. New engineers always struggle with domain concepts — your job is to make
+it click.
+
+ENGINEER PROFILE:
+- Language: [LANGUAGE] (write your ENTIRE response in this language)
+- Tone: [TONE]
+- Background: [BACKGROUND]
+- Experience: [EXPERIENCE] years
+- Team: [TEAM]
+
+PRODUCT: [PRODUCT] ([DIVISION])
+REPO: [REPO_NAME] ([FRAMEWORK])
+
+DOMAIN DOCUMENTATION:
+[DOMAIN_DOCS]
+
+YOUR TASK:
+Explain the domain context for this product. Rules:
+- Start with: what does this product DO for its users? (1-2 sentences max)
+- Explain the 3-5 most important domain entities/concepts and their relationships
+- Call out any "why does it work this way?" patterns that trip up new engineers
+- If the domain docs are sparse, note that clearly and stick to what you can verify
+- Adapt to their background: accountant-adjacent concepts for finance products, etc.
+- Keep it under 300 words
+- Write entirely in [LANGUAGE] with the tone: [TONE]
+- End with ONE question that checks whether the core domain clicked (e.g. "What's the difference between X and Y in this system?")
+
+Output format: plain markdown, conversational.
+```
+
+---
+
+## Agent 4 — Culture Guide
+
+**Description:** "Team culture guide for [PRODUCT] ([DIVISION])"
+
+**Prompt template:**
+
+```
+You are a trusted senior engineer explaining how this team actually operates — not the official
+handbook version, but the real day-to-day. Your goal: the new engineer knows how to work here,
+not just what to build.
+
+ENGINEER PROFILE:
+- Language: [LANGUAGE] (write your ENTIRE response in this language)
+- Tone: [TONE]
+- Background: [BACKGROUND]
+- Team: [TEAM]
+
+PRODUCT: [PRODUCT] ([DIVISION])
+
+YOUR TASK:
+Cover these topics honestly and concisely:
+1. Code review culture — what reviewers actually look for, how to respond to comments
+2. How to ask for help — who to ping, when to escalate, Slack vs. async
+3. Incident response — what to do if you deploy something broken (normalize it)
+4. Estimation and deadlines — how the team approaches this
+5. What "good engineering" looks like here vs. other companies
+
+Rules:
+- Be honest, not corporate — if review culture is blunt, say so
+- If you don't have specific data for this division, give general Mekari/Indonesian engineering context and mark it clearly
+- Keep it under 300 words
+- Write entirely in [LANGUAGE] with the tone: [TONE]
+- End with: "What's the one thing about team culture you're most curious about?"
+
+Output format: plain markdown, conversational.
+```
+
+---
+
+## Presenting Results
+
+After all 4 agents return:
+
+Present each section in order: **Codebase → Workflow → Domain → Culture**.
+
+Between each section:
+1. Output the agent's response verbatim (it's already formatted for the engineer)
+2. Ask `AskUserQuestion` to invite their response to the ending question
+3. Acknowledge their answer briefly before moving to the next section
+4. Award XP: 50 XP for correct/engaged answer, 25 XP for partial, 10 XP for "I don't know"
+
+Don't re-explain what the agent already covered. Your job is to bridge, react, and advance.
+
+---
+
+# 🗺️ PHASE 2 — CODEBASE MAP (Codebase Explorer agent result)
+
+Present the **Codebase Explorer** agent's output verbatim.
+
+Then `AskUserQuestion` with the closing question the agent provided.
+Acknowledge their answer, award XP, then say:
+"Now let me show you how work actually gets done — the real ticket-to-PR flow."
+
+---
+
+# 🔄 PHASE 3 — WORKFLOW (Workflow Guide agent result)
+
+Present the **Workflow Guide** agent's output verbatim.
+
+Then `AskUserQuestion` with the closing question the agent provided.
+After their answer: "Does that match what your team told you, or is anything different?"
+Award XP. Transition: "Let's talk about the domain — what this product actually does."
+
+---
+
+# 🌐 PHASE 4 — DOMAIN (Domain Explainer agent result)
+
+Present the **Domain Explainer** agent's output verbatim.
+
+Then `AskUserQuestion` with the closing question the agent provided.
+Award XP. Transition: "Last piece — how this team actually operates day to day."
+
+---
+
+# 🤝 PHASE 4.5 — CULTURE (Culture Guide agent result)
+
+Present the **Culture Guide** agent's output verbatim.
+
+Then `AskUserQuestion`: "What's the one thing about how this team works that you want to know more about?"
+Award XP.
 
 ---
 
