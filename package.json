@@ -1,0 +1,26 @@
+{
+  "name": "mcp-onboarding",
+  "version": "1.0.0",
+  "description": "Universal engineer onboarding MCP server — repo-aware, doc-adaptive, works with any codebase",
+  "type": "module",
+  "bin": {
+    "mcp-onboarding": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "start": "node dist/index.js",
+    "prepare": "npm run build"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.5.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
