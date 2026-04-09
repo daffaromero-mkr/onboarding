@@ -6,7 +6,7 @@ import { resolve } from "path";
 
 import { scanRepoDocs } from "./tools/scan-docs.js";
 import { analyzeRepoStructure } from "./tools/analyze-repo.js";
-import { generateRepoSnapshot } from "./tools/generate-snapshot.js";
+import { generateOnboardingDocs, checkDocsFreshness } from "./tools/generate-docs.js";
 import { resolveDivision } from "./tools/resolve-division.js";
 import { saveSessionNotes, listPastSessions } from "./tools/save-notes.js";
 
@@ -95,12 +95,18 @@ Returns: language, framework, package manager, test framework, Docker/CI status,
   }
 );
 
-// ─── Tool: generate_repo_snapshot ───────────────────────────────────────────
+// ─── Tool: generate_onboarding_docs ─────────────────────────────────────────
 server.tool(
-  "generate_repo_snapshot",
-  `Read key files from a repository to provide Claude with enough context to synthesize an onboarding session.
-Use this when there are NO existing onboarding docs. Returns file contents + directory tree.
-Claude should use this to generate a live onboarding session — architecture overview, setup steps, danger zones, key patterns.`,
+  "generate_onboarding_docs",
+  `Generate four persistent onboarding documentation files and write them to /docs/ in the repo:
+  - codebase.md     — folder structure, key files, patterns, danger zones
+  - workflow.md     — local setup, PR lifecycle, CI/CD, deploy
+  - domain.md       — business entities, glossary, domain rules
+  - system-design.md — tech stack, architecture, external dependencies
+
+Use this when scan_repo_docs finds NO onboarding docs (hasOnboardingDocs: false).
+Files are written to disk — they belong to the team, should be reviewed and committed.
+Subsequent /onboarding sessions will load from /docs/ without regenerating.`,
   {
     repo_path: z
       .string()
@@ -110,26 +116,43 @@ Claude should use this to generate a live onboarding session — architecture ov
   async ({ repo_path }) => {
     const repoPath = resolve(repo_path ?? process.cwd());
     const analysis = await analyzeRepoStructure(repoPath);
-    const snapshot = await generateRepoSnapshot(repoPath, analysis);
+    const result = await generateOnboardingDocs(repoPath, analysis);
 
-    const fileSections = snapshot.files.map((f) =>
-      [`### ${f.path}`, `_Role: ${f.role}_`, "```", f.content, "```"].join("\n")
-    );
+    const docPreviews = result.docs
+      .filter((d) => d.wasWritten)
+      .map((d) => [`### ${d.fileName}`, d.content.slice(0, 800), d.content.length > 800 ? "\n[...full file written to disk]" : ""].join("\n"))
+      .join("\n\n");
 
-    const output = [
-      snapshot.summary,
-      "",
-      `## Directory Tree`,
-      "```",
-      snapshot.directoryTree,
-      "```",
-      "",
-      `## Key File Contents`,
-      ...fileSections,
-    ].join("\n\n");
+    const output = [result.summary, "", docPreviews].join("\n");
 
     return {
       content: [{ type: "text", text: output }],
+    };
+  }
+);
+
+// ─── Tool: check_docs_freshness ──────────────────────────────────────────────
+server.tool(
+  "check_docs_freshness",
+  `Check whether the /docs/ onboarding files are fresh or stale (older than 90 days by default).
+Call this at the start of a session after scan_repo_docs confirms docs exist.
+Returns a warning if any docs are stale, with a suggestion to run /onboarding refresh-docs.`,
+  {
+    repo_path: z
+      .string()
+      .optional()
+      .describe("Absolute path to the repository root. Defaults to current working directory."),
+    stale_days_threshold: z
+      .number()
+      .int()
+      .default(90)
+      .describe("Number of days after which a doc is considered stale. Default: 90."),
+  },
+  async ({ repo_path, stale_days_threshold }) => {
+    const repoPath = resolve(repo_path ?? process.cwd());
+    const result = await checkDocsFreshness(repoPath, stale_days_threshold);
+    return {
+      content: [{ type: "text", text: result.summary }],
     };
   }
 );

@@ -1,0 +1,49 @@
+{
+  "mappings": [
+    {
+      "division": "jurnal",
+      "product_name": "Mekari Jurnal",
+      "repo_patterns": ["quickbook", "jurnal-", "mekari-jurnal"],
+      "confluence_space": "JURNAL",
+      "onboarding_root_page_id": null
+    },
+    {
+      "division": "talenta",
+      "product_name": "Mekari Talenta",
+      "repo_patterns": ["talenta-", "mekari-talenta", "hris-"],
+      "confluence_space": "TALENTA",
+      "onboarding_root_page_id": null
+    },
+    {
+      "division": "flex",
+      "product_name": "Mekari Flex",
+      "repo_patterns": ["flex-", "mekari-flex", "expense-"],
+      "confluence_space": "FLEX",
+      "onboarding_root_page_id": null
+    },
+    {
+      "division": "klikpajak",
+      "product_name": "Klikpajak",
+      "repo_patterns": ["klikpajak", "pajak-"],
+      "confluence_space": "KLIKPAJAK",
+      "onboarding_root_page_id": null
+    },
+    {
+      "division": "sign",
+      "product_name": "Mekari Sign",
+      "repo_patterns": ["mekari-sign", "esign-", "sign-core"],
+      "confluence_space": "SIGN",
+      "onboarding_root_page_id": null
+    },
+    {
+      "division": "platform",
+      "product_name": "Mekari Engineering Platform",
+      "repo_patterns": ["platform-", "eng-platform", "dx-"],
+      "confluence_space": "ENG-PLATFORM",
+      "onboarding_root_page_id": null
+    }
+  ],
+  "fallback_division": "unknown",
+  "fallback_confluence_space": "ENG",
+  "_note": "Set onboarding_root_page_id once Confluence MCP is wired up. repo_patterns matched against git remote URL and directory name."
+}

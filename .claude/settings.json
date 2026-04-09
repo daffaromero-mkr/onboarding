@@ -1,0 +1,61 @@
+{
+  "_comment": "Copy this to your repo's .claude/settings.json and update the paths.",
+  "mcpServers": {
+    "mcp-onboarding": {
+      "command": "node",
+      "args": ["/absolute/path/to/mcp-onboarding/dist/index.js"],
+      "_note": "Replace with the absolute path where you cloned mcp-onboarding"
+    },
+    "confluence": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-confluence"],
+      "env": {
+        "CONFLUENCE_URL": "https://mekari.atlassian.net/wiki",
+        "CONFLUENCE_TOKEN": "${CONFLUENCE_API_TOKEN}"
+      },
+      "_note": "Phase 2 — enable when Confluence MCP is provisioned"
+    },
+    "github": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-github"],
+      "env": {
+        "GITHUB_TOKEN": "${GITHUB_TOKEN}"
+      },
+      "_note": "Phase 2 — enable when GitHub MCP is provisioned"
+    }
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "mcp__mcp-onboarding__scan_repo_docs",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node /absolute/path/to/mcp-onboarding/hooks/pre-onboarding.js"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Agent",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node /absolute/path/to/mcp-onboarding/hooks/post-onboarding.js"
+          }
+        ]
+      }
+    ]
+  },
+  "permissions": {
+    "allow": [
+      "Bash(grep:*)",
+      "Bash(find:*)",
+      "Bash(git log:*)",
+      "Bash(git branch:*)",
+      "Bash(git remote:*)",
+      "Bash(pwd)"
+    ]
+  }
+}

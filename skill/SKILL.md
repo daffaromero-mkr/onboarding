@@ -9,7 +9,8 @@ user-invocable: true
 allowed-tools:
   - mcp__mcp-onboarding__scan_repo_docs
   - mcp__mcp-onboarding__analyze_repo_structure
-  - mcp__mcp-onboarding__generate_repo_snapshot
+  - mcp__mcp-onboarding__generate_onboarding_docs
+  - mcp__mcp-onboarding__check_docs_freshness
   - mcp__mcp-onboarding__resolve_division
   - mcp__mcp-onboarding__save_session_notes
   - mcp__mcp-onboarding__list_past_sessions
@@ -73,15 +74,31 @@ Call `scan_repo_docs` with the current repo path.
 **Decision branch:**
 
 ### Branch A — Onboarding docs FOUND (hasOnboardingDocs: true)
+Call `check_docs_freshness` to verify docs aren't stale (>90 days).
+- If stale: warn the engineer — "Some docs are over 90 days old. They may be outdated. Run `/onboarding refresh-docs` to regenerate."
+- If fresh: proceed silently.
 Use the found documentation as the primary content source for the session.
-You don't need to generate anything — the docs tell the story.
 Proceed to the welcome banner.
 
 ### Branch B — No dedicated onboarding docs (hasOnboardingDocs: false)
-Call `analyze_repo_structure` → then `generate_repo_snapshot`.
-You will synthesize the onboarding session live from the repo structure.
-Add this note in the session: "This repo doesn't have onboarding docs yet. I'll guide you through what I can read from the code itself."
+Show a progress message BEFORE the welcome banner:
+```
+⚙️  No onboarding docs found for this repo.
+    Generating documentation before we begin — this only runs once.
+
+    Analyzing codebase...
+    Mapping workflow...
+    Inferring domain context...
+    Writing /docs/...
+```
+Call `generate_onboarding_docs` with the current repo path. This writes four files to /docs/.
+After generation: "✅ Docs generated and saved to /docs/ — your team can review and commit them."
 Proceed to the welcome banner.
+
+### Branch C — `/onboarding refresh-docs` invoked
+If the user invokes the skill with the argument `refresh-docs`:
+Call `generate_onboarding_docs` to regenerate all four /docs/ files.
+After regeneration, offer to start a new session or let the engineer review the docs first.
 
 ---
 
