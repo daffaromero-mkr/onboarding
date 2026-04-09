@@ -10,26 +10,36 @@
 /onboarding trigger (any repo)
        │
        ▼
-PreToolUse Hook — docs-resolver.js
+PreToolUse Hook — pre-onboarding.js
   ├── Read cwd + git remote
-  ├── Scan for ANY valid docs (full_docs → legacy → CLAUDE.md → README)
-  │     ├── Found → inject into session context
-  │     └── None → run Doc Generation Agent → write /docs/ → inject
-  └── Enrich with MCP Confluence + GitHub if available (optional)
+  ├── Scan ALL doc levels, score completeness
+  │     ├── Sufficient → inject into session context
+  │     └── Gaps found → generate only missing docs → inject merged context
+  └── Enrich with MCP Confluence if available (optional, no token = skip)
        │
        ▼
-Onboarding Session (docs-driven)
+Onboarding Session — SKILL.md (docs-driven)
   └── 4 parallel sub-agents reading from resolved docs
        │
-       ├── [after each topic quiz] PostToolUse Hook — post-topic-quiz.js
-       │     └── Append topic report to .onboarding/session-{date}.json
+       ├── [after each topic quiz]
+       │   SKILL.md writes .onboarding/signals/{topic}.json
+       │   PostToolUse Hook (matcher: Write → .onboarding/signals/)
+       │   └── post-topic-quiz.js appends to session-{date}.json
        │
        ▼
 Graduation milestone
-  ├── PostToolUse Hook — post-graduation.js
-  │     ├── Write structured summary → Confluence (for managers)
-  │     └── Write personal letter → .onboarding/your-onboarding-letter.md
+  SKILL.md writes .onboarding/signals/graduation.json
+  PostToolUse Hook (matcher: Write → .onboarding/signals/graduation.json)
+  └── post-graduation.js
+        ├── Write to Confluence if MCP available, else skip silently
+        └── Write .onboarding/your-onboarding-letter.md
 ```
+
+### Architecture Notes
+
+- **Deployment model:** Global Claude Code skill installed by the user. Not an MCP server — runs as hooks + SKILL.md in the engineer's Claude Code session. Confluence MCP is an optional enrichment layer; the system runs fully without it.
+- **Confluence:** Optional. All Confluence writes are no-ops if MCP is unavailable or token not configured. No hard dependency.
+- **Engineer identity:** Captured from Q0 in the session; fallback to `git config user.name` if session answer not yet available when a hook fires early.
 
 ---
 
@@ -100,49 +110,80 @@ Operations needed:
 }
 ```
 
-### 1.3 Repo Context Resolver (replaces static division map)
+### 1.3 Repo Context Resolver
 
-The harness does **not** use a static mapping table. Instead, it dynamically resolves context from whatever docs and signals exist in the currently open repo. This means it works on any repo — known, unknown, new, or undocumented — without needing the division map to be kept up to date.
+No static division map. The resolver scans **all levels simultaneously**, scores completeness, merges what exists, and only generates what is missing.
 
-**Resolution logic:**
+**Completeness scoring:**
 
 ```javascript
 // .claude/hooks/docs-resolver.js
+
+const REQUIRED_TOPICS = ['codebase', 'workflow', 'domain', 'system-design'];
+
+// Maps each source file to which topics it covers
+const TOPIC_COVERAGE = {
+  'docs/codebase.md':             ['codebase'],
+  'docs/workflow.md':             ['workflow'],
+  'docs/domain.md':               ['domain'],
+  'docs/system-design.md':        ['system-design'],
+  '.claude/skills/onboarding/SKILL.md': ['codebase', 'workflow', 'domain'], // legacy covers 3
+  'CLAUDE.md':                    ['workflow', 'codebase'],  // often covers setup + structure
+  'README.md':                    ['codebase'],              // minimal codebase signal
+};
+
 async function resolveRepoContext() {
-  const repoCwd   = process.cwd();
-  const repoName  = path.basename(repoCwd);
+  const repoCwd    = process.cwd();
+  const repoName   = path.basename(repoCwd);
   const repoRemote = await exec('git remote get-url origin').catch(() => null);
 
-  // Scan for any valid docs — accept whatever exists
-  const candidates = [
-    { path: 'docs/',                          type: 'full_docs' },
-    { path: '.claude/skills/onboarding/',     type: 'legacy_skill' },
-    { path: 'CLAUDE.md',                      type: 'claude_instructions' },
-    { path: 'README.md',                      type: 'readme' },
-  ];
+  // Step 1: Scan ALL levels — never skip a level
+  const allSources = Object.keys(TOPIC_COVERAGE);
+  const found = {};
 
-  const found = [];
-  for (const candidate of candidates) {
-    const files = await glob(`${repoCwd}/${candidate.path}**/*.md`);
-    if (files.length > 0) found.push({ ...candidate, files });
+  for (const source of allSources) {
+    const fullPath = path.join(repoCwd, source);
+    if (await fileExists(fullPath)) {
+      const content = await readFile(fullPath);
+      if (content.trim().length > 500) { // ignore near-empty files
+        found[source] = { content, coveredTopics: TOPIC_COVERAGE[source] };
+      }
+    }
+  }
+
+  // Step 2: Score what topics are covered
+  const coveredTopics = new Set(
+    Object.values(found).flatMap(f => f.coveredTopics)
+  );
+  const missingTopics = REQUIRED_TOPICS.filter(t => !coveredTopics.has(t));
+
+  // Step 3: Check freshness on /docs/ files (warn if >90 days old)
+  for (const source of Object.keys(found)) {
+    if (source.startsWith('docs/')) checkFreshness(source);
   }
 
   return {
-    repo_name:   repoName,
-    repo_remote: repoRemote,
-    docs_found:  found,
-    docs_level:  found[0]?.type ?? 'none',  // best level found
-    // Division/product inferred later by the session from doc content — not resolved here
+    repo_name:      repoName,
+    repo_remote:    repoRemote,
+    sources:        found,          // all usable files found, with content
+    covered_topics: [...coveredTopics],
+    missing_topics: missingTopics,  // what needs to be generated
+    is_sufficient:  missingTopics.length === 0,
   };
 }
 ```
 
-No `division-map.json` file needed. Division and product identity are inferred from the content of the docs by the onboarding session itself.
+**Key behavior:**
+- README.md is **always** scanned — never ignored, even if `/docs/` exists
+- A repo with only `README.md` and `CLAUDE.md` is `covered: ['codebase', 'workflow']`, `missing: ['domain', 'system-design']` — only those two get generated
+- A repo with a partial `/docs/` (e.g. just `codebase.md`) gets the other three generated
+- All found sources are merged into session context — richer the repo, richer the session
 
 **Deliverables:**
-- [ ] MCP Confluence server running and authenticated
-- [ ] MCP GitHub server running and authenticated
-- [ ] `docs-resolver.js` implemented and tested against 3 repo states (full docs, legacy skill, empty)
+- [ ] MCP Confluence server configured (token optional — skip gracefully if absent)
+- [ ] MCP GitHub server configured (token optional — skip gracefully if absent)
+- [ ] `docs-resolver.js` implemented with completeness scoring
+- [ ] Tested against 4 repo states: full `/docs/`, partial `/docs/`, legacy SKILL.md only, bare repo
 
 ---
 
@@ -305,72 +346,138 @@ Rules:
 
 **Goal:** Build the docs resolution hook that fires before every `/onboarding` invocation.
 
-### 3.1 Docs Resolution Logic (repo-agnostic)
+### 3.1 Docs Resolution + Generation Logic
 
 ```javascript
 // hooks/pre-onboarding.js
+import { resolveRepoContext } from './docs-resolver.js';
+
 async function preOnboardingHook() {
-  const repoCwd    = process.cwd();
-  const repoName   = path.basename(repoCwd);
-  const repoRemote = await exec('git remote get-url origin').catch(() => null);
+  const ctx = await resolveRepoContext();
 
-  // Scan for ANY valid docs — accept whatever level exists
-  const scanOrder = [
-    { glob: 'docs/**/*.md',                    level: 'full_docs' },
-    { glob: '.claude/skills/onboarding/*.md',  level: 'legacy_skill' },
-    { glob: 'CLAUDE.md',                       level: 'claude_instructions' },
-    { glob: 'README.md',                       level: 'readme' },
-  ];
-
-  let docs = null;
-  for (const { glob: pattern, level } of scanOrder) {
-    const files = await glob(`${repoCwd}/${pattern}`);
-    if (files.length > 0) {
-      docs = await loadFiles(files);
-      docs.level = level;
-      checkDocsFreshness(docs); // warn if >90 days old
-      break;
-    }
+  // Generate only the missing topics — not a full regeneration
+  if (ctx.missing_topics.length > 0) {
+    console.log(`⚙️  Missing docs for: ${ctx.missing_topics.join(', ')}. Generating...`);
+    await runDocGenerationAgent({
+      repoName:      ctx.repo_name,
+      repoRemote:    ctx.repo_remote,
+      topicsToWrite: ctx.missing_topics,   // only generate what's missing
+    });
+    // Re-resolve to pick up newly generated files
+    const refreshed = await resolveRepoContext();
+    Object.assign(ctx, refreshed);
   }
 
-  if (!docs) {
-    showMessage('⚙️  No onboarding docs found. Generating docs for this repo...');
-    await runDocGenerationAgent(repoName, repoRemote);
-    docs = await loadFiles(await glob(`${repoCwd}/docs/**/*.md`));
-    docs.level = 'generated';
+  // Merge all found sources into a single context object
+  const mergedDocs = mergeDocSources(ctx.sources);  // README + CLAUDE.md + /docs/ all included
+
+  // Enrich with Confluence MCP — silently skip if unavailable or no token
+  const confluenceCtx = await tryConfluence(ctx.repo_name);
+
+  return injectContext({ docs: mergedDocs, confluenceCtx, repoName: ctx.repo_name });
+}
+
+async function tryConfluence(repoName) {
+  try {
+    return await mcp.confluence.fetchOnboardingContext(repoName);
+  } catch {
+    return null; // no token, server not running, or space not found — all treated the same
   }
-
-  // Enrich with MCP — optional, session runs without them
-  const confluenceCtx = await mcp.confluence.fetchIfAvailable(repoName);
-  const githubCtx     = await mcp.github.fetchIfAvailable(repoRemote);
-
-  return injectContext({ docs, confluenceCtx, githubCtx, repoName });
 }
 ```
 
-### 3.2 Per-Topic Quiz Hook
+### 3.2 Hook Signal Mechanism
 
-Fires after the engineer completes the quiz for each onboarding topic. Appends a structured entry to a local session file — does not write to Confluence.
+Claude Code `PostToolUse` hooks match on tool names, not custom event names. To avoid custom infrastructure, SKILL.md signals events by **writing sentinel files** to `.onboarding/signals/` using the `Write` tool. Hooks match on `Write` calls targeting that path.
+
+**Signal files written by SKILL.md:**
+
+```
+.onboarding/signals/topic-codebase.json      ← after Codebase quiz
+.onboarding/signals/topic-workflow.json      ← after Workflow quiz
+.onboarding/signals/topic-domain.json        ← after Domain quiz
+.onboarding/signals/topic-culture.json       ← after Culture quiz
+.onboarding/signals/graduation.json          ← on graduation
+```
+
+Each signal file carries the quiz result payload:
+
+```json
+// .onboarding/signals/topic-codebase.json (written by SKILL.md)
+{
+  "topic": "codebase",
+  "engineer_name": "Budi",
+  "xp_earned": 45,
+  "xp_max": 50,
+  "correct_concepts": ["service objects", "folder structure", "naming conventions"],
+  "missed_concepts": ["STI models", "karafka consumers"],
+  "questions_asked": ["When should I use a concern vs a service object?"]
+}
+```
+
+The `PostToolUse` hook matches on `Write` + path pattern — no custom events needed:
+
+```json
+// settings.json hook matcher
+{
+  "matcher": "Write",
+  "conditions": { "path": ".onboarding/signals/topic-*.json" },
+  "hooks": [{ "type": "command", "command": "node .claude/hooks/post-topic-quiz.js" }]
+}
+```
+
+The hook script reads `$CLAUDE_TOOL_INPUT` (the Write tool's file path and content) to know which topic just completed.
+
+### 3.3 Engineer Name Resolution
+
+```javascript
+// utils/engineer-name.js
+async function resolveEngineerName() {
+  // Priority 1: already captured in session state from Q0 answer
+  const sessionState = await readSessionState();
+  if (sessionState?.engineer_name) return sessionState.engineer_name;
+
+  // Priority 2: git config user.name
+  const gitName = await exec('git config user.name').catch(() => null);
+  if (gitName?.trim()) return gitName.trim().split(' ')[0]; // first name only
+
+  // Priority 3: git config user.email prefix
+  const gitEmail = await exec('git config user.email').catch(() => null);
+  if (gitEmail?.trim()) return gitEmail.split('@')[0];
+
+  return 'there'; // graceful fallback → "Hey there — you made it"
+}
+```
+
+SKILL.md writes `{ engineer_name }` to `.onboarding/session-state.json` immediately after Q0 is answered, so hooks that fire later in the session always have it available.
+
+### 3.4 Per-Topic Quiz Hook
 
 ```javascript
 // hooks/post-topic-quiz.js
-async function postTopicQuizHook({ topic, quizResult, engineerName, repoName }) {
-  const reportPath = `.onboarding/session-${today()}.json`;
+import { resolveEngineerName } from '../utils/engineer-name.js';
 
-  // Read existing session file or start fresh
+async function postTopicQuizHook() {
+  // Claude Code passes the Write tool's input via env
+  const signal = JSON.parse(process.env.CLAUDE_TOOL_INPUT);
+  const payload = JSON.parse(signal.content); // the signal file content
+
+  const engineerName = await resolveEngineerName();
+  const repoName     = path.basename(process.cwd());
+  const reportPath   = `.onboarding/session-${today()}.json`;
+
   let session = { engineer: engineerName, repo: repoName, session_date: today(), topics: [] };
   if (await fileExists(reportPath)) {
     session = JSON.parse(await readFile(reportPath));
   }
 
-  // Append this topic's result
   session.topics.push({
-    topic,
+    topic:           payload.topic,
     completed_at:    now(),
-    xp:              { earned: quizResult.xpEarned, max: quizResult.xpMax },
-    understood:      quizResult.correctConcepts,    // array of concept names
-    struggled_with:  quizResult.missedConcepts,     // array of concept names
-    open_questions:  quizResult.questionsAsked,     // questions the engineer asked mid-topic
+    xp:              { earned: payload.xp_earned, max: payload.xp_max },
+    understood:      payload.correct_concepts,
+    struggled_with:  payload.missed_concepts,
+    open_questions:  payload.questions_asked,
   });
 
   await fs.mkdir('.onboarding', { recursive: true });
@@ -378,97 +485,106 @@ async function postTopicQuizHook({ topic, quizResult, engineerName, repoName }) 
 }
 ```
 
-**When it fires:** after the engineer submits their answer to the final quiz question in each topic (Codebase, Workflow, Domain, Culture). Four writes per session total, one per topic.
+**Output:** `.onboarding/session-{date}.json` — gitignored, builds up one entry per topic.
 
-**Output:** `.onboarding/session-{date}.json` — gitignored, local to the engineer's machine.
-
-### 3.3 Graduation Letter Hook
-
-Fires once when the engineer reaches graduation (all topics completed or cheat code used). Writes two outputs:
+### 3.5 Graduation Letter Hook
 
 ```javascript
 // hooks/post-graduation.js
-async function postGraduationHook({ sessionOutput, engineerName, repoName }) {
-  // 1. Structured summary → Confluence (for managers, if available)
-  const summary = buildSessionSummary(sessionOutput);
-  await mcp.confluence.writeSummaryIfAvailable(summary);
+import { resolveEngineerName } from '../utils/engineer-name.js';
 
-  // 2. Personal letter → local file (for the engineer only)
-  const topicReports = JSON.parse(await readFile(`.onboarding/session-${today()}.json`));
+async function postGraduationHook() {
+  const engineerName  = await resolveEngineerName();
+  const repoName      = path.basename(process.cwd());
+  const topicReports  = JSON.parse(await readFile(`.onboarding/session-${today()}.json`));
 
-  const letter = generateGraduationLetter({
-    engineerName,
-    repoName,
-    topicReports,
-    // Letter generator reads:
-    // - Which topics the engineer aced (high XP, no struggled_with)
-    // - Which topics they struggled with
-    // - Open questions they asked (referenced by name in the letter)
-    // - Their declared background (from Q1 at session start)
-    tone: 'warm_senior_engineer',
-  });
+  // 1. Confluence summary — silent no-op if MCP unavailable or no token
+  try {
+    const summary = buildSessionSummary({ engineerName, repoName, topicReports });
+    await mcp.confluence.writeSummary(summary);
+  } catch {
+    // No Confluence token or server — skip, don't warn the engineer
+  }
+
+  // 2. Personal graduation letter → always written, no dependencies
+  const letter = await generateGraduationLetter({ engineerName, repoName, topicReports });
 
   await fs.mkdir('.onboarding', { recursive: true });
   await writeFile('.onboarding/your-onboarding-letter.md', letter);
 
-  showMessage("✉️  A personal note has been saved to .onboarding/your-onboarding-letter.md — give it a read.");
+  console.log("✉️  A personal note has been saved to .onboarding/your-onboarding-letter.md — give it a read.");
 }
 ```
 
-**Graduation letter rules (enforced in prompt):**
-- Addresses the engineer by first name
-- References ≥2 specific things from their session (strong areas, good questions asked)
-- Names one thing to watch out for — stated warmly, not as a warning
-- Closes with a concrete next-step nudge toward their first PR
-- Tone: senior engineer talking to a new teammate, not a system writing a report
+**`generateGraduationLetter` prompt rules:**
+- Address the engineer by first name (from `engineerName`)
+- Reference ≥2 specific things from `topicReports` (high-XP topics, notable questions asked)
+- Name one area from `struggled_with` — framed as "worth a ping to a senior, not a blocker"
+- Close with a concrete first-PR nudge
+- Tone: warm, direct, senior-engineer-to-new-teammate. Not corporate, not generic.
 
-**Output:** `.onboarding/your-onboarding-letter.md` — personal, local file. Not sent anywhere.
+**Output:** `.onboarding/your-onboarding-letter.md` — local only, never sent anywhere.
 
-### 3.4 Hook Registration
-
-In `.claude/settings.json`:
+### 3.6 Hook Registration
 
 ```json
+// .claude/settings.json
 {
+  "mcpServers": {
+    "confluence": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-confluence"],
+      "env": {
+        "CONFLUENCE_URL": "https://mekari.atlassian.net/wiki",
+        "CONFLUENCE_TOKEN": "${CONFLUENCE_API_TOKEN}"
+      }
+    }
+  },
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "skill:onboarding",
-        "hooks": [{ "type": "command", "command": "node .claude/hooks/pre-onboarding.js" }]
+        "matcher": "Bash",
+        "conditions": { "command_contains": "/onboarding" },
+        "hooks": [{ "type": "command", "command": "node ~/.claude/hooks/pre-onboarding.js" }]
       }
     ],
     "PostToolUse": [
       {
-        "matcher": "onboarding:topic_quiz_complete",
-        "hooks": [{ "type": "command", "command": "node .claude/hooks/post-topic-quiz.js" }]
+        "matcher": "Write",
+        "conditions": { "path_matches": "\\.onboarding/signals/topic-.+\\.json$" },
+        "hooks": [{ "type": "command", "command": "node ~/.claude/hooks/post-topic-quiz.js" }]
       },
       {
-        "matcher": "onboarding:graduation",
-        "hooks": [{ "type": "command", "command": "node .claude/hooks/post-graduation.js" }]
+        "matcher": "Write",
+        "conditions": { "path_matches": "\\.onboarding/signals/graduation\\.json$" },
+        "hooks": [{ "type": "command", "command": "node ~/.claude/hooks/post-graduation.js" }]
       }
     ]
   }
 }
 ```
 
-### 3.5 Skill Migration
+Note: hooks are installed globally in `~/.claude/` since this is a global skill, not per-repo.
 
-Update `.claude/skills/onboarding/SKILL.md` to be docs-driven:
+### 3.7 Skill Migration
 
-- Remove hardcoded Jurnal/Quickbook knowledge
-- Replace with doc injection placeholders: `{codebase_context}`, `{domain_context}`, `{workflow_context}`, `{system_design_context}`
-- Emit `onboarding:topic_quiz_complete` signal after each topic quiz (with topic name + quiz results)
-- Emit `onboarding:graduation` signal when all topics complete or cheat code used
-- Challenges generated from actual repo structure, not hardcoded examples
+Update `.claude/skills/onboarding/SKILL.md`:
+
+- Remove all hardcoded Jurnal/Quickbook knowledge — replaced by injected `{merged_docs_context}`
+- After each topic quiz: write `.onboarding/signals/topic-{name}.json` with quiz payload (via Write tool)
+- After graduation: write `.onboarding/signals/graduation.json`
+- Write `.onboarding/session-state.json` immediately after Q0 to capture `engineer_name`
+- Challenges generated from injected docs content, not hardcoded examples
 
 **Deliverables:**
-- [ ] `pre-onboarding.js` hook implemented (repo-agnostic docs resolution)
-- [ ] `post-topic-quiz.js` hook implemented (per-topic, appends to session JSON)
-- [ ] `post-graduation.js` hook implemented (Confluence summary + personal letter)
-- [ ] All three hooks registered in `settings.json`
-- [ ] SKILL.md refactored to emit topic and graduation signals
-- [ ] `.onboarding/` added to `.gitignore`
-- [ ] Docs freshness warning implemented
+- [ ] `docs-resolver.js` with completeness scoring (scans all levels, README always included)
+- [ ] `pre-onboarding.js` — resolves + generates only missing topics
+- [ ] `utils/engineer-name.js` — Q0 answer → git config → graceful fallback
+- [ ] `post-topic-quiz.js` — reads signal file, appends to session JSON
+- [ ] `post-graduation.js` — Confluence silent fallback + personal letter always written
+- [ ] All hooks registered globally in `~/.claude/settings.json`
+- [ ] SKILL.md refactored: docs-driven, writes signal files, captures engineer name at Q0
+- [ ] `.onboarding/` added to global `~/.claude/.gitignore` or per-repo `.gitignore`
 
 ---
 
@@ -591,14 +707,20 @@ docs/ (per repo — generated or hand-written, committed by team)
 
 ---
 
+## Resolved Decisions
+
+| # | Question | Decision |
+|---|----------|----------|
+| 1 | How do PostToolUse hooks know a topic quiz finished? | SKILL.md writes `.onboarding/signals/topic-{name}.json` via Write tool; hooks match on `Write` + path pattern |
+| 2 | Is this an MCP server or a skill + hooks? | Global Claude Code skill + hooks. Not an MCP server. Confluence MCP is optional enrichment. |
+| 3 | Confluence dependency? | Silent no-op if MCP unavailable or no token. Personal letter always written regardless. |
+| 4 | Where does engineer name come from? | Q0 session answer → git config user.name → email prefix → "there" |
+| 5 | Does docs resolver stop at first match? | No — scans all levels, scores completeness per topic, generates only missing topics, README always included |
+
 ## Open Questions
 
-1. **Docs ownership:** Should generated `/docs/` be committed to the repo or stored externally? Recommendation: commit to repo — teams own and maintain them.
+1. **Docs ownership:** Should generated `/docs/` be committed to the repo? Recommendation: yes — teams own and maintain them as living docs.
 
-2. **Doc generation cost:** First run on a large repo (Quickbook) may take 3–5 minutes. Is this acceptable UX? Mitigation: run async, show progress, cache result.
+2. **Doc generation cost on large repos:** First run on Quickbook may take 3–5 minutes. Acceptable — runs once, shows progress, result is cached in `/docs/`.
 
-3. **Confluence dependency:** Some repos may not have a corresponding Confluence space. How should the MCP handle this? Mitigation: graceful degradation to README + GitHub only.
-
-4. **Multi-repo services:** Engineers working across multiple repos — should sessions be per-repo or per-engineer? Recommendation: per-repo sessions, linked under one Confluence engineer page.
-
-5. **Docs staleness policy:** Who triggers re-generation? Recommendation: auto-warn if >90 days, provide `/onboarding refresh-docs` command.
+3. **Multi-repo engineers:** Sessions are per-repo. If Confluence is available, all session summaries link under one engineer page.

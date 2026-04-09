@@ -1,264 +1,523 @@
-# Mekari Engineering Onboarding MCP — User Guide
+# Onboarding MCP — User Guide
 
-> How to start, use, and get the most out of the onboarding MCP as a new engineer.
+> How to install, use, and get the most out of the onboarding skills as a new engineer or team lead.
+
+---
+
+## What This Is
+
+A set of Claude Code skills and hooks that turn any repo into a guided onboarding experience. It works in two parts:
+
+- **`/onboarding`** — an interactive mentor session adapted to your background and your repo
+- **`/doc-generator`** — an agent that reads your repo and writes `/docs/` if none exist
+
+Both skills work in any repo — they don't need pre-configured division maps or tokens to start.
+
+---
+
+## Installation
+
+### 1. Install Claude Code
+
+If you don't have it yet:
+
+```bash
+npm install -g @anthropic-ai/claude-code
+```
+
+Then authenticate:
+
+```bash
+claude login
+```
+
+### 2. Copy the skills into your Claude config
+
+Copy the `.claude/` folder from this repo into your home directory's Claude config:
+
+```bash
+# From this repo
+cp -r .claude/skills/onboarding ~/.claude/skills/onboarding
+cp -r .claude/skills/doc-generator ~/.claude/skills/doc-generator
+cp -r .claude/hooks ~/.claude/hooks
+```
+
+Or if you're setting this up for a specific project repo, copy into the project:
+
+```bash
+cp -r .claude/ /path/to/your-repo/.claude/
+```
+
+### 3. Register the hooks
+
+Add this to `~/.claude/settings.json` (global) or `.claude/settings.local.json` (per-repo):
+
+```json
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ~/.claude/hooks/pre-onboarding.js"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node -e \"const p=process.env.CLAUDE_TOOL_INPUT?JSON.parse(process.env.CLAUDE_TOOL_INPUT):{};const path=p.file_path||p.path||'';if(path.match(/\\.onboarding\\/signals\\/topic-.+\\.json$/)){require('child_process').execFileSync('node',['~/.claude/hooks/post-topic-quiz.js'],{stdio:'inherit'})}\""
+          }
+        ]
+      },
+      {
+        "matcher": "Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node -e \"const p=process.env.CLAUDE_TOOL_INPUT?JSON.parse(process.env.CLAUDE_TOOL_INPUT):{};const path=p.file_path||p.path||'';if(path.match(/\\.onboarding\\/signals\\/graduation\\.json$/)){require('child_process').execFileSync('node',['~/.claude/hooks/post-graduation.js'],{stdio:'inherit'})}\""
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+### 4. (Optional) Confluence integration
+
+If your team has a Confluence API token, add it to your environment to enable session summaries:
+
+```bash
+export CONFLUENCE_URL="https://your-org.atlassian.net/wiki"
+export CONFLUENCE_API_TOKEN="your_token_here"
+```
+
+The system works without this. Confluence summaries are written if available, silently skipped if not.
 
 ---
 
 ## Quick Start
 
-Open Claude Code in your team's repo and type:
+Open Claude Code in any repo and type:
 
 ```
 /onboarding
 ```
 
-That's it. The MCP handles the rest.
+That's it. Everything else is automatic.
 
 ---
 
-## What Happens When You Run It
+## What Happens Step by Step
 
-### Step 1 — Docs Check (automatic, ~10 seconds)
+### Step 1 — Docs Resolution (before the session opens)
 
-The MCP checks if your repo already has onboarding documentation:
-
-```
-✓ Found /docs/ — loading codebase, workflow, domain, and system design context...
-```
-
-If no docs exist yet:
+The `pre-onboarding.js` hook fires first and scans the repo for existing documentation:
 
 ```
-⚙️  No onboarding docs found for this repo.
-    Generating documentation before we begin...
-    This takes ~2-3 minutes and only runs once.
-
-    [████████░░░░░░░░░░░░] Analyzing codebase...
-    [████████████░░░░░░░░] Mapping workflow...
-    [████████████████░░░░] Inferring domain context...
-    [████████████████████] Writing /docs/...
-
-✓ Documentation generated. Starting your onboarding session.
+✓ Context ready — 4/4 topics covered (quickbook)
 ```
 
-The generated docs are saved to `/docs/` in your repo. They belong to your team — review them, correct anything wrong, and commit them.
+It checks, in order:
+1. `/docs/codebase.md`, `/docs/workflow.md`, `/docs/domain.md`, `/docs/system-design.md`
+2. `.claude/skills/onboarding/SKILL.md` (legacy skill)
+3. `CLAUDE.md`
+4. `README.md`
 
-### Step 2 — Welcome + Language Selection
+**It reads all of them** — it doesn't stop at the first match. README is always included. The more docs you have, the richer the session.
 
-```
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  Welcome to Mekari Engineering Onboarding
-  Repo: quickbook | Division: Jurnal
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-Q: Bahasa Indonesia atau English?
-```
-
-Pick your language — the entire session continues in your chosen language.
-
-### Step 3 — Background Questions
-
-The mentor asks 2-3 quick questions to adapt the session to you:
-
-- What's your engineering background? (Java, Python, fresh grad, frontend, etc.)
-- Which squad/team are you joining?
-
-These answers change how concepts are explained. A Java engineer gets Rails concepts framed as Spring analogues. A fresh grad gets gentler pacing with more context.
-
-### Step 4 — Parallel Onboarding
-
-Four areas run concurrently and stream results as they finish:
-
-| Area | What You'll Learn |
-|------|-------------------|
-| **Codebase** | Where things live, key files, naming patterns, danger zones |
-| **Workflow** | How to go from a ticket to a merged PR |
-| **Domain** | What the business words mean and why the code looks this way |
-| **Culture** | How the team operates, review culture, how to ask for help |
-
-### Step 5 — Mini Challenges
-
-After each area, you get a short challenge based on the actual repo:
+It also scores completeness:
 
 ```
-Challenge: Find the service object that handles invoice creation.
-Hint: check /docs/codebase.md → Key Files section
-XP: 50 points for first correct answer
+⚙️  Missing docs for: domain, system-design. Generating...
 ```
 
-Challenges use your repo's real structure — not generic examples.
+If any of the four topics are missing, the doc-generator agent runs automatically before the session opens. This only happens once — after that, `/docs/` is committed to the repo.
 
-### Step 6 — Session Summary
+### Step 2 — Doc Generation (only if docs are missing)
 
-When you finish (or end the session), a summary is saved to Confluence under your onboarding page. Your manager gets a notification — no action needed from them, just visibility.
+The `/doc-generator` agent reads your repo using Claude's tools — not shell scripts — so it actually understands the code:
+
+```
+⚙️  Generating docs for: domain, system-design
+   Repo: quickbook
+   This only runs once and saves to /docs/
+```
+
+It runs four analyzers in parallel, each targeting one file:
+
+| Analyzer | Reads | Writes |
+|----------|-------|--------|
+| Codebase Analyzer | File tree, largest models, service layer, routes | `docs/codebase.md` |
+| Workflow Analyzer | CI config, PR templates, Makefile, deploy scripts | `docs/workflow.md` |
+| Domain Inferencer | Model files, DB schema, service namespaces | `docs/domain.md` |
+| Architecture Synthesizer | External calls, queue config, env vars, DB config | `docs/system-design.md` |
+
+Takes 2–5 minutes on a large repo. **Runs once, then never again** unless you ask.
+
+Generated files include this header:
+
+```
+> AUTO-GENERATED on 2026-04-09 — review and commit to keep accurate.
+> Inaccuracies? Edit this file and open a PR.
+```
+
+Review them, fix anything wrong, and commit. They're owned by the team now.
+
+### Step 3 — Session Opens
+
+You'll be asked two things immediately:
+
+1. **Language** — Bahasa Indonesia or English. The full session follows your choice.
+2. **Your name** — used throughout the session and in your personal graduation letter.
+
+Your name is resolved this way if you skip:
+1. From your session answer
+2. From `git config user.name`
+3. From your git email prefix
+4. Falls back to "there"
+
+### Step 4 — Background Questions (Phase 1)
+
+The mentor builds a picture of who you are before any technical content:
+
+- Experience level (fresh grad → senior)
+- Tech background (Java / Python / Go / JS / PHP / Ruby)
+- Confidence level on a 1–5 scale
+- Which domain/squad you're joining
+- What success looks like for you in 3 months
+
+These answers change everything. A Java engineer gets Rails explained as Spring analogues. A fresh grad gets slower pacing. A senior engineer goes straight to the Mekari-specific landmines.
+
+### Step 5 — Codebase Tour (Phases 2–4)
+
+Content is driven entirely by your repo's `/docs/` files — not hardcoded knowledge. The session covers:
+
+- How the repo is organized (from `docs/codebase.md`)
+- Danger zones — large, callback-heavy, or highly-connected files
+- Callbacks and what fires when you call `.save!`
+- Feature flags (if your repo uses them)
+- Soft deletes (if your repo uses `acts_as_paranoid` or equivalent)
+- Service objects and background jobs
+- Rails console (or equivalent) — how to explore safely
+
+The mentor also reads the live repo if docs are incomplete — it won't make things up.
+
+### Step 6 — Knowledge Challenges (Phase 4.5, optional)
+
+After the tour, you're offered optional mini-challenges. Each is a short scenario based on your actual repo:
+
+```
+Challenge: If a bug report says "Invoice total is wrong"
+           which directory do you start in?
+
+  → app/services/   (business logic layer)
+  → app/models/     (data and validations)
+  → app/controllers/ (request handling)
+```
+
+XP is awarded for correct answers. No answer is shamed — wrong answers get an explanation.
+
+**After you complete each topic's challenges, a topic report is saved automatically:**
+
+```
+.onboarding/
+└── session-2026-04-09.json   ← built up as you go
+```
+
+This is a local file, never shared. It's what the graduation letter is built from.
+
+### Step 7 — Real Work Simulation (Phase 6)
+
+A full ticket walkthrough — from reading the ticket to verifying in staging. Eight steps, each with a question. Covers:
+
+1. What to do before touching code
+2. How to trace from route → controller → service → model
+3. How to reproduce safely in the console (scoped by company/tenant)
+4. Root cause hypotheses (data vs. callbacks vs. async jobs)
+5. Making the change safely (feature flags)
+6. Writing the right test
+7. Writing a PR description that earns trust
+8. Staging verification protocol
+
+### Step 8 — Graduation
+
+When you complete all phases (or use a cheat code), the graduation banner appears.
+
+**Two things happen automatically:**
+
+1. **Confluence summary** (if MCP is configured) — written to your onboarding page, tagged to your manager. Structured: topics covered, XP, open questions, next steps.
+
+2. **Personal graduation letter** — written to `.onboarding/your-onboarding-letter.md` on your machine. Not sent anywhere. Just for you.
+
+The letter is written in the voice of a senior engineer who watched your session. It references specific things you did — topics you aced, questions you asked, one area to watch out for. It's not a report. It reads like a note from a human.
+
+```
+Hey Budi — you made it.
+
+You moved through the workflow section with real confidence...
+Your question about "concern vs service object" was exactly
+the right question to ask before your first ticket...
+
+One thing to keep in mind: STI models tripped you up a bit.
+Before you touch those areas, just ping a senior first...
+```
 
 ---
 
-## Commands
+## The `/doc-generator` Skill
 
-### Start onboarding
-```
-/onboarding
-```
+You can run the doc generator manually at any time:
 
-### Start with a specific division (if auto-detection fails)
 ```
-/onboarding division=talenta
+/doc-generator
 ```
 
-### Force-refresh the generated docs
-```
-/onboarding refresh-docs
-```
+Use this when:
 
-### Resume a previous session (if you got interrupted)
-```
-/onboarding resume
+- Your repo has no `/docs/` at all and you want to generate them before onboarding
+- Docs exist but are stale and need a full refresh
+- You're the team lead setting up a new repo for your team
+
+### What it detects automatically
+
+The agent detects your tech stack from config files, then adapts its analysis accordingly:
+
+| Stack | Detected from |
+|-------|--------------|
+| Ruby / Rails | `Gemfile`, `config/routes.rb` |
+| Node / TypeScript | `package.json`, `tsconfig.json` |
+| Python | `pyproject.toml`, `requirements.txt` |
+| Go | `go.mod` |
+| Java / Spring | `pom.xml`, `build.gradle` |
+| PHP / Laravel | `composer.json` |
+
+It also detects:
+- CI/CD system (GitHub Actions, GitLab CI, CircleCI, Jenkins)
+- Test framework (RSpec, Jest, pytest, JUnit)
+- Queue system (Sidekiq, Celery, BullMQ, Kafka, RabbitMQ)
+- Database (PostgreSQL, MySQL, MongoDB — from config files)
+
+### Forcing specific topics
+
+If you only need to regenerate one doc:
+
+Write or delete the file you want regenerated, then create a manual request:
+
+```bash
+# Create a request to regenerate only domain.md
+mkdir -p .onboarding
+cat > .onboarding/doc-generation-request.json << 'EOF'
+{
+  "topics_to_generate": ["domain"],
+  "repo_name": "your-repo-name",
+  "repo_remote": "git@github.com:org/repo.git"
+}
+EOF
+
+# Then run
+/doc-generator
 ```
 
 ---
 
-## Auto-Trigger Keywords
+## Output Files Reference
 
-You don't have to type `/onboarding`. The MCP also activates when you say:
-
-- `"I'm new here"` / `"baru masuk nih"`
-- `"where do I start"` / `"mulai dari mana ya"`
-- `"help me understand the codebase"`
-- `"first day"` / `"hari pertama"`
-- `"help me onboard"`
-
----
-
-## The `/docs` Folder
-
-After your first onboarding, your repo will have a `/docs` folder:
+### `/docs/` (committed to repo, owned by team)
 
 ```
 docs/
-├── system-design.md   ← Architecture, tech stack, service boundaries
-├── codebase.md        ← Folder structure, key files, naming, danger zones
-├── domain.md          ← Business glossary, domain entities, domain rules
-└── workflow.md        ← Local setup, PR process, CI/CD, deploy steps
+├── system-design.md   ← Tech stack, architecture, external deps, data flow
+├── codebase.md        ← Folder structure, key files, patterns, danger zones
+├── domain.md          ← Business entities, glossary, domain rules
+└── workflow.md        ← Local setup, branch naming, PR lifecycle, CI/CD, deploy
 ```
 
-These files were either written by your team or auto-generated by the MCP.
+Every file has an auto-generated header with the date. Files are under 300 lines by design.
 
-**If they were auto-generated:**
-- They will have a header: `AUTO-GENERATED on {date} — please review and commit`
-- Read through them — they're mostly accurate but may miss things only humans know
-- Correct anything wrong and submit a PR — this helps the next new joiner
+### `.onboarding/` (gitignored, local to your machine)
 
-**If they were written by your team:**
-- They're your primary reference. The onboarding session is based on them.
-- If something is outdated (>90 days), the MCP will warn you and suggest a refresh
+```
+.onboarding/
+├── session-context.json          ← Injected by pre-hook (docs + repo info)
+├── session-state.json            ← Your name + language, written at Q0
+├── session-YYYY-MM-DD.json       ← Topic reports, built up during session
+├── your-onboarding-letter.md     ← Personal graduation letter
+└── signals/
+    ├── topic-codebase.json       ← Written by SKILL.md after codebase quiz
+    ├── topic-workflow.json       ← Written after workflow quiz
+    ├── topic-domain.json         ← Written after domain quiz
+    ├── topic-culture.json        ← Written after culture section
+    └── graduation.json           ← Triggers graduation hooks
+```
 
----
-
-## How to Get the Most Out of It
-
-### Be honest about your background
-The session adapts to you. If you say you're a Java developer, you'll get Rails concepts explained in terms of Spring. If you say you're a fresh grad, the pacing is gentler. The mentor isn't judging — it's calibrating.
-
-### Ask follow-up questions
-The session is conversational. After any explanation, you can ask:
-
-- *"Can you show me an example in this codebase?"*
-- *"Why was it built this way?"*
-- *"What's the difference between X and Y?"*
-- *"Where's the best place to ask about this later?"*
-
-### Don't skip the challenges
-They're short (5-10 minutes each) and they're based on your actual repo. Getting them right means you actually know where things are — not just that you read about them.
-
-### Do multiple sessions
-You don't have to finish in one sitting. Each session saves your progress. Come back after your first PR and the session will pick up from where you left off and adjust to what you now know.
+The `signals/` files are ephemeral — they trigger the hooks and are read immediately. The session JSON and graduation letter persist.
 
 ---
 
 ## For Team Leads and Senior Engineers
 
-### Reviewing generated docs
+### First time setup for a new repo
 
-When the MCP generates `/docs/` for the first time, you'll get a Confluence notification. Take 15–20 minutes to review and correct the four files. Commit them to the repo. This one-time investment means every future new joiner gets accurate documentation.
-
-### Session summaries
-
-After each engineer completes onboarding, you get a Confluence summary:
+Run the doc generator once before your new joiner arrives:
 
 ```
-Engineer: Budi Santoso
-Session date: 2026-04-09
-Division: Jurnal
-
-Topics covered: Codebase (✓), Workflow (✓), Domain (partial), Culture (✓)
-XP earned: 340 / 500
-Open questions logged:
-  - "What's the difference between Invoice and Sales Invoice?"
-  - "When should I use a Service Object vs. a Concern?"
-
-Next steps:
-  - [ ] Complete Domain onboarding (30 min estimated)
-  - [ ] First PR: small bug fix or test improvement
+/doc-generator
 ```
 
-This tells you what the engineer knows and what they still need help with — without them having to ask you directly.
+Review the four output files (`/docs/*.md`). They'll be mostly accurate but may miss things only humans know — institutional decisions, why certain things are named the way they are, team-specific norms.
 
-### Keeping docs current
+Spend 15–20 minutes editing them. Commit. Every future new joiner benefits.
 
-Docs are only useful if they're accurate. The MCP will warn engineers if `/docs/` files are older than 90 days. When that happens, run:
+### Reading session reports
+
+After an engineer's graduation, check Confluence (if configured) for their session summary. It shows:
+
+- Which topics they completed and their XP per topic
+- Concepts they demonstrated understanding of
+- Concepts they struggled with
+- Every question they asked during the session
+
+This is more useful than a 1:1 check-in because it's specific. You know exactly what to follow up on.
+
+### Keeping docs fresh
+
+The pre-hook warns if `/docs/` files are older than 90 days:
 
 ```
-/onboarding refresh-docs
+⚠️  Some docs are over 90 days old — consider refreshing:
+   • docs/workflow.md (94 days old)
 ```
 
-Or update the files manually and commit. The MCP uses whatever is in `/docs/` — the quality of the session depends on the quality of the docs.
+When that happens, either re-run `/doc-generator` for those topics or update manually. Stale docs make the onboarding session less accurate.
+
+### What the graduation letter looks like
+
+After a session graduates, `.onboarding/your-onboarding-letter.md` is written to the engineer's machine. You won't see it — it's personal and local. But it references specific things from their session, so it's not generic. Engineers tend to keep it.
+
+---
+
+## Hook Architecture (for platform engineers)
+
+If you're maintaining this system:
+
+```
+.claude/hooks/
+├── package.json              ← { "type": "module" } — all scripts are ES modules
+├── docs-resolver.js          ← Scans all doc levels, scores completeness per topic
+├── pre-onboarding.js         ← PreToolUse: resolve docs → generate missing → inject context
+├── run-doc-generator.js      ← Orchestrator: invokes doc-generator skill via claude --print
+├── post-topic-quiz.js        ← PostToolUse: reads signal file, appends to session JSON
+├── post-graduation.js        ← PostToolUse: writes Confluence summary + personal letter
+└── utils/
+    ├── engineer-name.js      ← Name resolution: session-state → git config → email → "there"
+    └── today.js              ← Date/time helpers
+```
+
+### Hook trigger chain
+
+```
+/onboarding typed
+       │
+PreToolUse (Bash matcher)
+  └── pre-onboarding.js
+        ├── docs-resolver.js  → scores completeness
+        ├── run-doc-generator.js  → only if topics missing
+        └── writes session-context.json
+
+Session runs
+  │
+  │  [after codebase quiz]  SKILL.md writes .onboarding/signals/topic-codebase.json
+  │  PostToolUse (Write matcher, path: topic-*.json)
+  │  └── post-topic-quiz.js → appends to session-{date}.json
+  │
+  │  [same for workflow, domain, culture]
+  │
+  │  [graduation]  SKILL.md writes .onboarding/signals/graduation.json
+  │  PostToolUse (Write matcher, path: graduation.json)
+  └── post-graduation.js
+        ├── Confluence summary (silent no-op if no token)
+        └── .onboarding/your-onboarding-letter.md
+```
+
+### Adding Confluence support
+
+1. Get an API token from your Atlassian account settings (scoped to Engineering spaces)
+2. Set environment variables:
+   ```bash
+   export CONFLUENCE_URL="https://mekari.atlassian.net/wiki"
+   export CONFLUENCE_API_TOKEN="your_token"
+   ```
+3. In `settings.local.json`, change `"disabled": true` to `"disabled": false` on the confluence MCP server entry
+
+The system checks for `CONFLUENCE_API_TOKEN` before making any calls. No token = no calls, no errors.
 
 ---
 
 ## Troubleshooting
 
-### "Division not detected"
+### "No docs found — generating..." takes too long
 
-The MCP couldn't match your repo remote URL to a known Mekari product.
+Doc generation can take 3–5 minutes on large repos. This is expected and only happens once. If it times out, placeholder files are written to `/docs/` automatically and the session continues. Run `/doc-generator` manually afterward to get the real content.
 
-Fix: run `/onboarding division=<name>` with your division name (`jurnal`, `talenta`, `flex`).
+### "The generated docs have wrong information"
 
-If your team is new, add your repo pattern to `.claude/division-map.json` and open a PR to the platform team.
+Expected. The doc generator infers from code and marks inferences with `(inferred)`. Edit the file directly, correct what's wrong, submit a PR. The next new joiner gets accurate docs.
 
-### "Doc generation is taking a long time"
+### "Graduation letter wasn't written"
 
-On large repos (e.g. Quickbook), doc generation can take 3–5 minutes. This only happens once. Leave it running — it will notify you when done.
+Check `.onboarding/your-onboarding-letter.md`. If it doesn't exist:
+1. Confirm the session reached graduation (the banner appeared)
+2. Check if `post-graduation.js` hook is registered in `settings.local.json`
+3. Run the hook manually: `node .claude/hooks/post-graduation.js`
 
-### "The generated docs are inaccurate"
+### "Confluence summary not appearing"
 
-This is expected. The MCP infers from code — it doesn't know the history or the decisions. Edit the file directly and submit a PR. The header on the file will remind future readers to check accuracy.
+Confluence is optional. Check that `CONFLUENCE_API_TOKEN` is set in your environment and that `"disabled": false` in the MCP server config. If the token is wrong or the space doesn't exist, the hook fails silently — check the hook output for errors.
 
-### "MCP Confluence is not responding"
+### Hook not firing at all
 
-The MCP will gracefully fall back to README + CLAUDE.md as context. The session continues without Confluence data. Report the issue to the Engineering Platform team.
+Verify the hook is registered:
 
-### "I want to restart my onboarding"
-
+```bash
+cat ~/.claude/settings.json | grep -A5 "PostToolUse"
 ```
-/onboarding restart
+
+Also confirm the `hooks/package.json` has `"type": "module"` — without this, the ES module imports fail silently.
+
+### "I want to redo my onboarding from scratch"
+
+Delete the session files and start fresh:
+
+```bash
+rm -rf .onboarding/
 ```
 
-This clears your session progress and starts fresh. Your previous session summary in Confluence is preserved.
+Then run `/onboarding` again. The `/docs/` files are preserved — only the personal session data is cleared.
 
 ---
 
 ## Requirements
 
-- Claude Code installed and running
-- MCP servers configured by your platform team (Confluence + GitHub)
-- Access to the Mekari Confluence engineering spaces
-- At minimum: a git repo with a `git remote` set
+| Requirement | Notes |
+|-------------|-------|
+| Claude Code CLI | `npm install -g @anthropic-ai/claude-code` |
+| Node.js ≥ 18 | Required for hook scripts (ES modules) |
+| Git repo with a remote | Used to identify the repo |
+| `/docs/` or README | Minimum viable context (docs generated if absent) |
+| Confluence API token | Optional — session summaries only |
 
 ---
 
 ## Questions and Feedback
 
-Open an issue in the [eng-platform repo] or post in `#dx-feedback` on Slack.
+Post in `#dx-feedback` on Slack or open an issue in the eng-platform repo.
 
-If the onboarding session gave you wrong information or missed something important, please update the `/docs/` files in your repo — that's the fastest way to improve the experience for the next new joiner.
+If the onboarding session gave you wrong information, update `/docs/` in your repo — that's the fastest fix for everyone who comes after you.

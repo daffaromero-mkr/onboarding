@@ -5,7 +5,57 @@
       "Bash(find:*)",
       "Bash(bundle exec:*)",
       "Bash(git add:*)",
-      "Bash(git commit:*)"
+      "Bash(git commit:*)",
+      "Bash(git config:*)",
+      "Write(.onboarding/**)"
+    ]
+  },
+  "mcpServers": {
+    "confluence": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-confluence"],
+      "env": {
+        "CONFLUENCE_URL": "${CONFLUENCE_URL}",
+        "CONFLUENCE_TOKEN": "${CONFLUENCE_API_TOKEN}"
+      },
+      "disabled": true,
+      "comment": "Enable when CONFLUENCE_API_TOKEN is available. System runs without it."
+    }
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node .claude/hooks/pre-onboarding.js",
+            "comment": "Fires before /onboarding skill — resolves docs, generates missing topics"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node -e \"const p=process.env.CLAUDE_TOOL_INPUT?JSON.parse(process.env.CLAUDE_TOOL_INPUT):{};const path=p.file_path||p.path||'';if(path.match(/\\.onboarding\\/signals\\/topic-.+\\.json$/)){require('child_process').execFileSync('node',['.claude/hooks/post-topic-quiz.js'],{stdio:'inherit'})}\"",
+            "comment": "Topic quiz signal handler — fires when SKILL.md writes .onboarding/signals/topic-*.json"
+          }
+        ]
+      },
+      {
+        "matcher": "Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node -e \"const p=process.env.CLAUDE_TOOL_INPUT?JSON.parse(process.env.CLAUDE_TOOL_INPUT):{};const path=p.file_path||p.path||'';if(path.match(/\\.onboarding\\/signals\\/graduation\\.json$/)){require('child_process').execFileSync('node',['.claude/hooks/post-graduation.js'],{stdio:'inherit'})}\"",
+            "comment": "Graduation signal handler — fires when SKILL.md writes .onboarding/signals/graduation.json"
+          }
+        ]
+      }
     ]
   }
 }

@@ -296,7 +296,37 @@ Never make wrong answers feel bad. Frame all mistakes as "yeah, everyone thinks 
 
 ### Q0 — LANGUAGE SELECTION (First thing!)
 
-Before anything else, ask:
+Before anything else, load the session context injected by the pre-onboarding hook:
+
+```
+Read(".onboarding/session-context.json")
+```
+
+This file contains `merged_docs` — the combined content of all onboarding docs found in this repo (from `/docs/`, CLAUDE.md, README.md, or auto-generated). Use this as your source of truth for all repo-specific content throughout the session (codebase structure, domain terms, workflow, architecture). Do not rely on hardcoded Quickbook/Jurnal knowledge — use what the docs say instead.
+
+If `session-context.json` does not exist, proceed anyway — the session works without it, falling back to general Rails onboarding guidance.
+
+Also check if a doc generation request is pending:
+
+```
+Read(".onboarding/doc-generation-request.json")
+```
+
+If this file exists and `topics_to_generate` is non-empty, announce before the welcome banner:
+
+> "⚙️ I need to generate some onboarding docs for this repo first — this only happens once. Give me a moment..."
+
+Then use sub-agents (run in background) to generate each missing topic file into `/docs/`:
+- For `codebase`: analyze folder structure, key files, patterns, danger zones → write `/docs/codebase.md`
+- For `workflow`: analyze CI config, README, CLAUDE.md, PR patterns → write `/docs/workflow.md`
+- For `domain`: analyze models, routes, service objects → write `/docs/domain.md`
+- For `system-design`: analyze tech stack, services, configs → write `/docs/system-design.md`
+
+After generation completes, re-read session-context.json and proceed.
+
+---
+
+Now ask for language:
 
 ```
 AskUserQuestion({
@@ -318,11 +348,28 @@ AskUserQuestion({
 })
 ```
 
-**After they choose:**
-- Remember this choice throughout the entire session
+**After they choose**, immediately ask their name and write session state:
+
+> "Before we start — what should I call you?"
+
+Use `AskUserQuestion` with a text input, or accept a typed response. Then immediately write:
+
+```
+Write(".onboarding/session-state.json", {
+  "engineer_name": "<their first name>",
+  "language": "<ID or EN>",
+  "repo": "<repo name from session-context.json>",
+  "started_at": "<current timestamp>"
+})
+```
+
+This file is read by all hooks to identify the engineer throughout the session.
+
+**After they choose language and share their name:**
+- Remember both choices throughout the entire session
 - Adjust tone, reactions, explanations, and encouragement based on their language
 - See persona examples above for the right vibe for each language
-- Keep it friendly and mentee-mentor, never formal or boring
+- Address them by first name throughout — it matters
 
 ---
 
@@ -791,60 +838,39 @@ Introduce concepts one at a time. After each, ask a quick question before moving
 
 #### 3a. The Repo at a Glance
 
-```
-┌─────────────────── app/ ────────────────────┐
-│                                             │
-│  controllers/   ← thin, delegates to svc    │
-│  models/        ← 325 models, heavy logic   │
-│  services/      ← business logic (149 ns)   │
-│  workers/       ← 78 Sidekiq async jobs     │
-│  consumers/     ← 35 Karafka (Kafka)        │
-│  concerns/      ← 161 shared behavior       │
-│  policies/      ← Pundit authorization      │
-│                                             │
-└─────────────────────────────────────────────┘
-      + vue/  (modern)   app/javascript/ (legacy)
-```
+**Use the `codebase` section from session-context.json merged_docs.**
 
-- `app/controllers/` — thin, delegate to services
-- `app/models/` — 325 models, many with heavy callbacks
-- `app/services/` — this is where business logic lives, 149 namespaces
-- `app/workers/` — 78 Sidekiq background jobs
-- `app/consumers/` — 35 Karafka (Kafka) message consumers
-- `app/concerns/` — 161 shared behavior modules
-- `app/policies/` — Pundit authorization
-- TWO frontends: `vue/` (modern Vue.js) + `app/javascript/` (legacy Webpacker)
+Present the folder structure, entry points, key files, naming conventions, and common patterns as described in the docs. If the docs don't mention something, use your general Rails knowledge but be clear it's a general pattern, not repo-specific.
 
-Key numbers to drop naturally: 325 models, 149 service namespaces, 161 concerns, 78 workers, 35 consumers.
+If the docs include a folder structure diagram, reproduce it. Otherwise, generate one by reading the actual repo structure.
 
-#### 3b. The God Models (Warn Early)
-> "Okay I need to tell you about something early. There are three models that basically run the whole system. Touching them wrong can break things in ways that aren't obvious."
+Key things to surface from the codebase docs:
+- Top-level folder layout and what lives where
+- Where business logic lives (services, concerns, or controllers?)
+- Any non-standard patterns or directories
+- Frontend setup if present
 
-- **Company** — 6,798 lines. Root of all multi-tenancy. 36+ concerns. 100+ associations. Every piece of data belongs to a Company.
-- **Account** — 4,530 lines. The accounting backbone. 9+ callbacks. Touching it triggers GL sync, ES sync, cache clearing, webhooks.
-- **Transaction** — 4,366 lines. Base class for invoices, payments, credit notes, etc. STI — all types live in one table. 20+ callbacks.
+#### 3b. The Danger Zones (Warn Early)
 
-> "Combined that's 15,694 lines. No one has read all of it. The goal isn't to understand everything — it's to know these files exist and to be careful when you get near them."
+**Use the `danger_zones` or equivalent section from the codebase docs.**
+
+> "Okay I need to tell you about something early. There are files/areas in this repo that can cause cascading effects if you touch them wrong."
+
+Surface from docs:
+- The largest / most-interconnected models (check for STI base classes, god objects, heavily-callbacked models)
+- Any explicit "danger zone" warnings in the docs
+- Callback-heavy areas
+- Files that affect multiple other systems when changed
+
+If the docs have specific examples with line counts, class names, or callback lists — use them verbatim. Those specifics matter. If the docs are silent on this, note that and use general Rails guidance (check callbacks before touching large models).
 
 ```
-┌──────────────── God Models ──────────────────┐
-│                                              │
-│  Company (6,798 lines)                       │
-│    └─ root of ALL data (100+ associations)   │
-│    └─ 36+ concerns                           │
-│                                              │
-│  Account (4,530 lines)                       │
-│    └─ accounting backbone                    │
-│    └─ .save! triggers:                       │
-│         GL sync → ES sync → cache → webhook  │
-│                                              │
-│  Transaction (4,366 lines)                   │
-│    └─ STI base: Invoice, Payment,            │
-│         CreditNote, SalesOrder, +8 more      │
-│    └─ 20+ callbacks                          │
-│                                              │
-│  Combined: 15,694 lines                      │
-└──────────────────────────────────────────────┘
+What to look for in this repo's danger zones (from docs):
+{danger_zones_from_codebase_docs}
+
+If not documented — general rule:
+  Find the largest models: wc -l app/models/*.rb | sort -rn | head -5
+  Then check callbacks: Model._save_callbacks
 ```
 
 Use `AskUserQuestion` to check in before moving on:
@@ -1538,6 +1564,23 @@ AskUserQuestion({
 
 Level up: "Level up — **Orientation Level 3: Codebase Aware**. Most people take a week to get here."
 
+**⚡ WRITE CODEBASE TOPIC SIGNAL — do this immediately after challenges complete:**
+
+Tally the XP earned and concepts from this phase, then write the signal file:
+
+```
+Write(".onboarding/signals/topic-codebase.json", {
+  "topic": "codebase",
+  "xp_earned": <total XP awarded in this phase>,
+  "xp_max": 235,
+  "correct_concepts": [<list concepts they got right, e.g. "service objects", "god models", "callbacks", "soft delete", "feature flags">],
+  "missed_concepts": [<list concepts they got wrong or "not sure" on>],
+  "questions_asked": [<list any follow-up questions they asked you during the phase>]
+})
+```
+
+This write is silent — don't mention it to the engineer.
+
 ---
 
 ### PHASE 5 — The 70/30 Rule & AI Safety
@@ -1608,6 +1651,21 @@ AskUserQuestion({
 
 Level up: **Orientation Level 4: AI-Safe** 🤖
 > "You now know where AI helps and where it gets this codebase wrong. That puts you ahead of most people."
+
+**⚡ WRITE DOMAIN TOPIC SIGNAL — do this immediately after Phase 5 completes:**
+
+```
+Write(".onboarding/signals/topic-domain.json", {
+  "topic": "domain",
+  "xp_earned": <XP from domain/AI safety discussion>,
+  "xp_max": 50,
+  "correct_concepts": [<domain concepts they demonstrated understanding of — from docs context and Phase 5 discussion>],
+  "missed_concepts": [<domain concepts they were unclear on>],
+  "questions_asked": [<product/domain/business questions they asked during the session>]
+})
+```
+
+This write is silent — don't mention it to the engineer.
 
 ---
 
@@ -1851,9 +1909,51 @@ Award XP progressively as they work through it. Celebrate when they apply concep
 Level up: **Orientation Level 5: Ticket Ready** 🎉
 > "You just simulated your first ticket end-to-end. That's the whole workflow."
 
+**⚡ WRITE WORKFLOW TOPIC SIGNAL — do this immediately after Phase 6 completes:**
+
+```
+Write(".onboarding/signals/topic-workflow.json", {
+  "topic": "workflow",
+  "xp_earned": <total XP from Phase 6 steps>,
+  "xp_max": 275,
+  "correct_concepts": [<e.g. "clarify before coding", "trace route to service", "sandbox mode", "company scoping", "feature flag", "test-driven fix", "PR description", "staged verification">],
+  "missed_concepts": [<steps where they chose suboptimal answers>],
+  "questions_asked": [<any follow-up questions they asked during Phase 6>]
+})
+```
+
+This write is silent — don't mention it to the engineer.
+
 ---
 
 ## 🎉 GRADUATION CELEBRATION BANNER
+
+**Before printing the graduation banner, write the culture signal and graduation signal:**
+
+```
+Write(".onboarding/signals/topic-culture.json", {
+  "topic": "culture",
+  "xp_earned": <XP from Phase 7 culture discussion>,
+  "xp_max": 50,
+  "correct_concepts": [<culture concepts they resonated with — reliability, communication, review culture, etc.>],
+  "missed_concepts": [],
+  "questions_asked": [<any culture/team questions they asked>]
+})
+```
+
+Then immediately write the graduation signal:
+
+```
+Write(".onboarding/signals/graduation.json", {
+  "completed_at": "<current timestamp>",
+  "total_xp": <sum of all XP earned>,
+  "achievements": [<list of achievements unlocked>],
+  "phases_completed": [<list of phase numbers completed>],
+  "via_cheat_code": <true if triggered by cheat code, false if via Phase 6>
+})
+```
+
+Both writes are silent — don't mention them to the engineer. Then print the banner:
 
 **Print this verbatim when they complete the onboarding (or when cheat code is triggered):**
 
@@ -2016,33 +2116,37 @@ Adjust framing. Use analogies:
 
 ## 🧠 LIVE CODEBASE INTEGRATION
 
-When explaining concepts, use real codebase data. Reference actual files when helpful.
+When explaining concepts, use real codebase data from `session-context.json`. Reference actual files when helpful.
 
-**Key files to know and reference:**
-- [Company model](../../../app/models/company.rb) — 6,798 lines, root of multi-tenancy
-- [Account model](../../../app/models/account.rb) — 4,530 lines, accounting backbone
-- [Transaction model](../../../app/models/transaction.rb) — 4,366 lines, STI base
-- [ApplicationService](../../../app/services/application_service.rb) — base class for all services
-- [Featurable concern](../../../app/models/concerns/company_concern/featurable.rb) — feature flag metaprogramming
-- [AI workflow docs](../../../docs/ai-workflow/) — 70/30 rule, risk checklists, prompting guide
-- [Onboarding docs](../../../docs/onboarding/) — full tour, aha moments, common mistakes
+**Key files to reference:**
 
-**Key numbers to use naturally in conversation (don't list them all at once):**
-| What | Number |
-|------|--------|
-| ActiveRecord models | 325 |
-| Service namespaces | 149 |
-| Model concerns | 161 |
-| Sidekiq workers | 78 |
-| Karafka consumers | 35 |
-| Soft-delete models | 117 |
-| Flipper flag checks | 534 |
-| update_columns usages | 368 |
-| God Model combined lines | 15,694 |
-| Company concerns | 36+ |
-| Account callbacks | 9+ |
-| Transaction callbacks | 20+ |
-| Transaction STI subtypes | 11+ |
+Use the file paths and descriptions from the `codebase` section of the injected docs. These are repo-specific — do not hardcode paths for Quickbook/Jurnal if the session is running in a different repo.
+
+If the docs mention specific models, services, or concerns with high impact (large files, many callbacks, STI patterns) — surface them. If not mentioned, use the Glob and Grep tools to discover the largest models and most-connected files live.
+
+**Key numbers to use naturally:**
+
+Do NOT hardcode Quickbook-specific numbers (325 models, 149 services, etc.) unless this session's docs confirm them. Instead:
+- Reference numbers the docs explicitly state
+- If undocumented, discover them live: `wc -l app/models/*.rb | sort -rn | head -5`
+- Be honest when a number is estimated vs. confirmed
+
+**Discovering live codebase facts during session:**
+```bash
+# Count models
+ls app/models/*.rb | wc -l
+
+# Find largest files
+wc -l app/models/*.rb | sort -rn | head -10
+
+# Find callback-heavy models
+grep -l "after_commit\|after_save\|before_save" app/models/*.rb | wc -l
+
+# Find soft-delete models
+grep -rl "acts_as_paranoid" app/models/ | wc -l
+```
+
+Use these when the docs don't have the answer — the live repo is always the most accurate source.
 
 **Codebase-specific gotchas to weave in naturally:**
 - Account's `after_commit` fires: `webhook_action`, `resync_transaction`, `clear_rcache_hierarchy`, GL sync, ES sync

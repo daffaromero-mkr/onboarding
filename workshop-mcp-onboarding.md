@@ -76,12 +76,12 @@ If neither exists, the **Doc Generation Agent** runs before onboarding starts.
 
 When triggered, the agent generates a `/docs` folder with four files:
 
-| File | Contents |
-|------|----------|
+| File               | Contents                                                                    |
+| ------------------ | --------------------------------------------------------------------------- |
 | `system-design.md` | Architecture overview, tech stack, service boundaries, key design decisions |
-| `codebase.md` | Folder structure, key files, naming conventions, danger zones, STI patterns |
-| `domain.md` | Business domain glossary, product concepts, why code is shaped this way |
-| `workflow.md` | PR lifecycle, CI/CD, branch naming, deploy process, review culture |
+| `codebase.md`      | Folder structure, key files, naming conventions, danger zones, STI patterns |
+| `domain.md`        | Business domain glossary, product concepts, why code is shaped this way     |
+| `workflow.md`      | PR lifecycle, CI/CD, branch naming, deploy process, review culture          |
 
 These docs become the source of truth for the onboarding session — the MCP injects them into the session context directly.
 
@@ -89,14 +89,14 @@ These docs become the source of truth for the onboarding session — the MCP inj
 
 ## 4. Desired State
 
-| Before | After |
-|--------|-------|
-| New engineer reads docs alone, gets overwhelmed | Interactive session adapts to their background |
-| Waits hours/days for senior engineer availability | Onboarding starts within 1 minute of `/onboarding` |
-| Onboarding quality varies by division and team | Consistent baseline across all Mekari products |
-| No visibility into what confused new joiners | Session summaries in Confluence give managers data |
-| Local skill locked to one repo (Quickbook only) | MCP harness works from any repo, generates docs if missing |
-| Undocumented repos block onboarding | Doc Generation Agent bootstraps any repo automatically |
+| Before                                            | After                                                      |
+| ------------------------------------------------- | ---------------------------------------------------------- |
+| New engineer reads docs alone, gets overwhelmed   | Interactive session adapts to their background             |
+| Waits hours/days for senior engineer availability | Onboarding starts within 1 minute of `/onboarding`         |
+| Onboarding quality varies by division and team    | Consistent baseline across all Mekari products             |
+| No visibility into what confused new joiners      | Session summaries in Confluence give managers data         |
+| Local skill locked to one repo (Quickbook only)   | MCP harness works from any repo, generates docs if missing |
+| Undocumented repos block onboarding               | Doc Generation Agent bootstraps any repo automatically     |
 
 ---
 
@@ -162,10 +162,10 @@ Engineer opens ANY repo → types /onboarding
 │                                        │
 │  ↓ spawns parallel sub-agents          │
 │                                        │
-│  ┌──────────┐ ┌──────────┐ ┌────────┐ │
-│  │Codebase  │ │Workflow  │ │Domain  │ │
-│  │Agent     │ │Agent     │ │Agent   │ │
-│  └──────────┘ └──────────┘ └────────┘ │
+│  ┌──────────┐ ┌──────────┐ ┌────────┐  │
+│  │Codebase  │ │Workflow  │ │Domain  │  │
+│  │Agent     │ │Agent     │ │Agent   │  │
+│  └──────────┘ └──────────┘ └────────┘  │
 │        ┌──────────┐                    │
 │        │Culture   │                    │
 │        │Agent     │                    │
@@ -250,12 +250,12 @@ Based on answers + docs content, the session adapts per engineer background.
 
 Four agents run concurrently (`run_in_background: true`), reading from generated/existing docs:
 
-| Agent | Reads From | Output |
-|-------|-----------|--------|
-| **Codebase Explorer** | `/docs/codebase.md` + live repo scan | Map of the repo, danger zones, key patterns |
-| **Workflow Agent** | `/docs/workflow.md` + recent PRs | How a ticket goes from Jira to production |
-| **Domain Agent** | `/docs/domain.md` + Confluence glossary | What the business words mean |
-| **Culture Agent** | Confluence team pages | How this team operates day-to-day |
+| Agent                 | Reads From                              | Output                                      |
+| --------------------- | --------------------------------------- | ------------------------------------------- |
+| **Codebase Explorer** | `/docs/codebase.md` + live repo scan    | Map of the repo, danger zones, key patterns |
+| **Workflow Agent**    | `/docs/workflow.md` + recent PRs        | How a ticket goes from Jira to production   |
+| **Domain Agent**      | `/docs/domain.md` + Confluence glossary | What the business words mean                |
+| **Culture Agent**     | Confluence team pages                   | How this team operates day-to-day           |
 
 ### Step 5 — Progressive Challenges + Per-Topic Report Hook
 
@@ -521,29 +521,29 @@ end
 
 ## 9. Risks and Mitigations
 
-| Risk | Mitigation |
-|------|-----------|
-| Doc generation takes too long | Show progress indicator; cache result; only runs once per repo |
-| Generated docs are inaccurate | Agent marks them as `AUTO-GENERATED — please review`; team edits and commits |
-| Confluence pages are stale or missing | Graceful fallback to README + CLAUDE.md; log missing pages for DX team |
-| Sub-agents return conflicting info | Synthesis prompt explicitly resolves conflicts; flags contradictions to engineer |
-| Division detection fails for new repos | Manual override: `/onboarding division=talenta` |
-| Session too long, engineer loses focus | Checkpointing — each phase saves state; engineer can resume |
-| Sensitive Confluence content exposed | MCP Confluence uses read-only token scoped to Engineering spaces only |
-| /docs/ becomes stale over time | Docs freshness check warns if files >90 days old; nudges team to re-run |
+| Risk                                   | Mitigation                                                                       |
+| -------------------------------------- | -------------------------------------------------------------------------------- |
+| Doc generation takes too long          | Show progress indicator; cache result; only runs once per repo                   |
+| Generated docs are inaccurate          | Agent marks them as `AUTO-GENERATED — please review`; team edits and commits     |
+| Confluence pages are stale or missing  | Graceful fallback to README + CLAUDE.md; log missing pages for DX team           |
+| Sub-agents return conflicting info     | Synthesis prompt explicitly resolves conflicts; flags contradictions to engineer |
+| Division detection fails for new repos | Manual override: `/onboarding division=talenta`                                  |
+| Session too long, engineer loses focus | Checkpointing — each phase saves state; engineer can resume                      |
+| Sensitive Confluence content exposed   | MCP Confluence uses read-only token scoped to Engineering spaces only            |
+| /docs/ becomes stale over time         | Docs freshness check warns if files >90 days old; nudges team to re-run          |
 
 ---
 
 ## 10. Success Metrics
 
-| Metric | Baseline | Target (3 months post-launch) |
-|--------|----------|-------------------------------|
-| Time to first PR (new joiner) | ~5 days | ≤ 3 days |
-| Onboarding Q&A interruptions/week per senior engineer | ~4 hrs | ≤ 1 hr |
-| New joiner satisfaction score (survey) | not tracked | ≥ 4.0 / 5.0 |
-| Session completion rate | N/A | ≥ 80% complete Phase 1–3 |
-| Divisions covered | 1 (Jurnal) | ≥ 3 (Jurnal, Talenta, Flex) |
-| Repos with auto-generated docs | 0 | ≥ 10 internal repos |
+| Metric                                                | Baseline    | Target (3 months post-launch) |
+| ----------------------------------------------------- | ----------- | ----------------------------- |
+| Time to first PR (new joiner)                         | ~5 days     | ≤ 3 days                      |
+| Onboarding Q&A interruptions/week per senior engineer | ~4 hrs      | ≤ 1 hr                        |
+| New joiner satisfaction score (survey)                | not tracked | ≥ 4.0 / 5.0                   |
+| Session completion rate                               | N/A         | ≥ 80% complete Phase 1–3      |
+| Divisions covered                                     | 1 (Jurnal)  | ≥ 3 (Jurnal, Talenta, Flex)   |
+| Repos with auto-generated docs                        | 0           | ≥ 10 internal repos           |
 
 ---
 
